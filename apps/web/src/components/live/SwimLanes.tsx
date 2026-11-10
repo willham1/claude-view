@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { type SubAgentContext, findSubAgentContext } from '../../hooks/use-subagent-context'
 import { formatCostUsd } from '../../lib/format-utils'
+import { getContextLimit } from '../../lib/model-context-windows'
 import { cn } from '../../lib/utils'
 import type { SubAgentInfo } from '../../types/generated/SubAgentInfo'
 import { formatTokensCompact } from '../spinner/constants'
@@ -16,13 +17,24 @@ interface SwimLanesProps {
 }
 
 /**
+ * Window size for a sub-agent, from the same source the main session's
+ * Context Window panel uses (`getContextLimit` for the model), plus the 1M
+ * signal the transcript can carry in the model id (`[1m]` suffix or a
+ * `context-1m` marker). Returns null only when no model is known.
+ */
+export function subAgentWindowSize(ctx: SubAgentContext): number | null {
+  const model = ctx.model ?? null
+  if (model == null || model === '') return null
+  if (/\[1m\]|context-1m/i.test(model)) return 1_000_000
+  return getContextLimit(model, ctx.peakContextTokens)
+}
+
+/**
  * Context-window line for one sub-agent: size at its first request, now, and
  * at its largest request.
  *
- * A fill bar and percentage are shown only when the window size is known
- * (`windowSize`, e.g. from Claude Code's status line). Sub-agent transcripts do
- * not record whether a request ran with the 200k or the 1M window, so the size
- * is not guessed from the token count.
+ * A fill bar and percentage are shown when the window size is known
+ * (`windowSize`, see `subAgentWindowSize`); otherwise tokens only.
  */
 export function SubAgentContextRow({
   ctx,
@@ -229,7 +241,9 @@ export function SwimLanes({ subAgents, onDrillDown, contexts }: SwimLanesProps) 
             )}
 
             {/* Row 3: context window (from the sub-agent's own transcript) */}
-            {ctx && ctx.requestCount > 0 && <SubAgentContextRow ctx={ctx} />}
+            {ctx && ctx.requestCount > 0 && (
+              <SubAgentContextRow ctx={ctx} windowSize={subAgentWindowSize(ctx)} />
+            )}
           </div>
         )
       })}

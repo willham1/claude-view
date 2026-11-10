@@ -401,7 +401,10 @@ export function SessionDetailPanel({
   const dbCostUsd = data.historyExtras?.sessionInfo?.totalCostUsd
   const subAgentCostUsd = subAgents?.reduce((s, a) => s + (a.costUsd ?? 0), 0) ?? 0
   const sidechainCostUsd = sidechainsData?.reduce((s, sc) => s + (sc.costUsd ?? 0), 0) ?? 0
-  const calculatedCostUsd = data.cost.totalUsd + subAgentCostUsd + sidechainCostUsd
+  // Team sidechains price every subagents/agent-*.jsonl of the session, the same
+  // files sub-agent costs come from, so count one or the other, never both.
+  const calculatedCostUsd =
+    data.cost.totalUsd + (sidechainsData && sidechainsData.length > 0 ? sidechainCostUsd : subAgentCostUsd)
   const totalCostUsd = calculatedCostUsd > 0 ? calculatedCostUsd : (dbCostUsd ?? 0)
   const totalCostLabel = hasUnavailableCost(totalCostUsd, data.cost, data.tokens.totalTokens)
     ? 'Unavailable'

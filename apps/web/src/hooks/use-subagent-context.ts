@@ -39,6 +39,7 @@ export function useSubAgentContext(
   enabled: boolean,
   live: boolean,
   pollMs = 5000,
+  timeoutMs = 15000,
 ): SubAgentContext[] | undefined {
   const [data, setData] = useState<SubAgentContext[] | undefined>(undefined)
 
@@ -46,12 +47,18 @@ export function useSubAgentContext(
     if (!enabled || !sessionId) return
     let cancelled = false
     // In-flight guard: a poll tick is skipped while the previous request runs.
+    // Each request is aborted after `timeoutMs`, so a stalled request cannot
+    // hold the guard forever and freeze the figures.
     let inFlight = false
+    let current: AbortController | null = null
     const url = `/api/sessions/${encodeURIComponent(sessionId)}/subagents/context`
     const load = () => {
       if (inFlight) return
       inFlight = true
-      fetch(url)
+      const controller = new AbortController()
+      current = controller
+      const timeout = setTimeout(() => controller.abort(), timeoutMs)
+      fetch(url, { signal: controller.signal })
         .then((r) => (r.ok ? r.json() : undefined))
         .then((json) => {
           if (!cancelled && Array.isArray(json)) setData(json as SubAgentContext[])
@@ -60,6 +67,8 @@ export function useSubAgentContext(
           /* keep the last good data */
         })
         .finally(() => {
+          clearTimeout(timeout)
+          if (current === controller) current = null
           inFlight = false
         })
     }
@@ -67,12 +76,14 @@ export function useSubAgentContext(
     if (!live) {
       return () => {
         cancelled = true
+        current?.abort()
       }
     }
     const timer = setInterval(load, pollMs)
     return () => {
       cancelled = true
       clearInterval(timer)
+      current?.abort()
     }
   }, [sessionId, enabled, live, pollMs])
 

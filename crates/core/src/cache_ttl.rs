@@ -8,8 +8,9 @@
 //!
 //! Rule used everywhere (live accumulator, rich-session accumulator, resume
 //! cost estimate, and the web UI): the TTL is that of the session's latest
-//! cache write. 1 hour when the latest write had 1h tokens, 5 minutes when it
-//! had only 5m tokens, and the 5-minute default when no split was ever seen.
+//! cache write. 1 hour when the latest write had only 1h tokens, 5 minutes
+//! when it had any 5m tokens (a mixed write's 5m part expires first), and the
+//! 5-minute default when no split was ever seen.
 //! A cache read refreshes the lifetime of the entry it hit, so the countdown
 //! still starts from the latest cache read or write (`last_cache_hit_at`).
 

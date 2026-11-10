@@ -44,8 +44,16 @@ describe('SwimLanes', () => {
 
     it('renders multiple agents', () => {
       const agents = [
-        makeSubAgent({ toolUseId: '1', agentType: 'search', description: 'Agent 1' }),
-        makeSubAgent({ toolUseId: '2', agentType: 'edit', description: 'Agent 2' }),
+        makeSubAgent({
+          toolUseId: '1',
+          agentType: 'search',
+          description: 'Agent 1',
+        }),
+        makeSubAgent({
+          toolUseId: '2',
+          agentType: 'edit',
+          description: 'Agent 2',
+        }),
       ]
       render(<SwimLanes subAgents={agents} sessionActive={true} />)
 
@@ -76,7 +84,9 @@ describe('SwimLanes', () => {
       })
       render(<SwimLanes subAgents={[agent]} sessionActive={false} />)
 
-      expect(screen.getByText('$0.03')).toBeInTheDocument()
+      // Row cost (the header total also reads $0.03 with one agent).
+      expect(screen.getByTestId('subagent-cost').textContent).toBe('$0.03')
+      expect(screen.getByTestId('subagent-cost-total').textContent).toContain('$0.03')
       expect(screen.getByText('5s')).toBeInTheDocument()
       expect(screen.getByText('3 tool calls')).toBeInTheDocument()
     })
@@ -219,7 +229,10 @@ describe('SwimLanes', () => {
     })
 
     it('accepts sessionActive=false with completed agents', () => {
-      const agent = makeSubAgent({ status: 'complete', completedAt: Date.now() })
+      const agent = makeSubAgent({
+        status: 'complete',
+        completedAt: Date.now(),
+      })
       render(<SwimLanes subAgents={[agent]} sessionActive={false} />)
 
       expect(screen.getByText('Test agent')).toBeInTheDocument()
@@ -269,7 +282,11 @@ describe('SwimLanes', () => {
     })
 
     it('shows start, now and peak for a finished agent matched by agentId', () => {
-      const agent = makeSubAgent({ status: 'complete', agentId: 'abc1', toolUseId: 'other' })
+      const agent = makeSubAgent({
+        status: 'complete',
+        agentId: 'abc1',
+        toolUseId: 'other',
+      })
       render(<SwimLanes subAgents={[agent]} contexts={[ctx()]} />)
       const row = screen.getByTestId('subagent-context')
       expect(row.textContent).toContain('start 9.2k')
@@ -325,13 +342,82 @@ describe('SwimLanes', () => {
     it('shows a bar and percentage when the window size is known', () => {
       render(
         <SubAgentContextRow
-          ctx={ctx({ currentContextTokens: 170_000, peakContextTokens: 170_000 })}
+          ctx={ctx({
+            currentContextTokens: 170_000,
+            peakContextTokens: 170_000,
+          })}
           windowSize={1_000_000}
         />,
       )
       const text = screen.getByTestId('subagent-context').textContent ?? ''
       expect(text).toContain('1.0M')
       expect(text).toContain('17%')
+    })
+
+    it('uses the model window for current models from the first request (no 200k guess)', () => {
+      expect(subAgentWindowSize(ctx({ model: 'claude-opus-5-5' }))).toBe(1_000_000)
+      expect(subAgentWindowSize(ctx({ model: 'claude-fable-5-2' }))).toBe(1_000_000)
+      expect(subAgentWindowSize(ctx({ model: 'claude-haiku-5-5' }))).toBe(1_000_000)
+      expect(subAgentWindowSize(ctx({ model: 'claude-sonnet-5-5' }))).toBe(1_000_000)
+      const agent = makeSubAgent({ status: 'complete', agentId: 'abc1' })
+      render(
+        <SwimLanes
+          subAgents={[agent]}
+          contexts={[ctx({ model: 'claude-opus-5-5', currentContextTokens: 150_000 })]}
+        />,
+      )
+      const text = screen.getByTestId('subagent-context').textContent ?? ''
+      expect(text).toContain('1.0M')
+      expect(text).toContain('15%')
+    })
+
+    it('shows each row cost from the transcript and a total, labelled list price', () => {
+      const agents = [
+        makeSubAgent({
+          status: 'complete',
+          agentId: 'abc1',
+          toolUseId: 't1',
+          costUsd: null,
+        }),
+        makeSubAgent({ status: 'running', agentId: 'abc2', toolUseId: 't2' }),
+      ]
+      render(
+        <SwimLanes
+          subAgents={agents}
+          contexts={[
+            ctx({ costUsd: 1.25 }),
+            ctx({ agentId: 'abc2', toolUseId: 't2', costUsd: 0.5 }),
+          ]}
+        />,
+      )
+      const costs = screen.getAllByTestId('subagent-cost').map((e) => e.textContent)
+      expect(costs).toContain('$0.50 so far')
+      expect(costs.some((c) => c?.startsWith('$1.25'))).toBe(true)
+      const total = screen.getByTestId('subagent-cost-total')
+      expect(total.textContent).toContain('$1.75')
+      expect(total.textContent).toContain('list price')
+      expect(total.getAttribute('title')).toContain('List-price equivalent')
+    })
+
+    it('shows the cost on an error row too (background agents cut off by session end)', () => {
+      const agent = makeSubAgent({
+        status: 'error',
+        agentId: 'abc1',
+        errorReason: 'Session ended',
+      })
+      render(<SwimLanes subAgents={[agent]} contexts={[ctx({ costUsd: 12.08 })]} />)
+      expect(screen.getByTestId('subagent-cost').textContent).toBe('$12.08')
+      expect(screen.getByText('Session ended')).toBeInTheDocument()
+    })
+
+    it('falls back to the parent-reported cost when the transcript has none', () => {
+      const agent = makeSubAgent({
+        status: 'complete',
+        agentId: 'abc1',
+        costUsd: 0.3,
+      })
+      render(<SwimLanes subAgents={[agent]} contexts={[ctx({ costUsd: undefined })]} />)
+      expect(screen.getByTestId('subagent-cost').textContent).toBe('$0.30')
     })
 
     it('shows nothing when no context is known', () => {

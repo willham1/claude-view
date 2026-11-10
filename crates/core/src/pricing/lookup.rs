@@ -284,12 +284,13 @@ mod tests {
         assert!(lookup_pricing("claude-sonnet-9-9", &pricing).is_some());
         assert!(lookup_pricing("claude-haiku-9-9", &pricing).is_some());
 
-        // A future Fable release must inherit Fable 5's rate ($10/$50), not fall
-        // through to "Unavailable". Fable is a distinct family from Opus — before
-        // it was added to the Family enum this returned None.
+        // A future Fable release must inherit the newest Fable rate (local fork:
+        // Fable 5.2, $8/$40), not fall through to "Unavailable". Fable is a
+        // distinct family from Opus — before it was added to the Family enum
+        // this returned None.
         let fable_future = lookup_pricing("claude-fable-6", &pricing)
             .expect("future fable release must resolve via family fallback");
-        let fable5 = pricing.get("claude-fable-5").unwrap();
+        let fable5 = pricing.get("claude-fable-5-2").unwrap();
         assert_eq!(
             fable_future.input_cost_per_token,
             fable5.input_cost_per_token

@@ -22,7 +22,7 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
 import { useChatPanel } from '../../hooks/use-chat-panel'
@@ -30,7 +30,11 @@ import { useCommandExecutor } from '../../hooks/use-command-executor'
 import { useFileHistory } from '../../hooks/use-file-history'
 import { usePlanDocuments } from '../../hooks/use-plan-documents'
 import { useSessionDetail } from '../../hooks/use-session-detail'
-import { useSubAgentContext } from '../../hooks/use-subagent-context'
+import {
+  LIST_PRICE_TITLE,
+  useSubAgentContext,
+  withTranscriptCosts,
+} from '../../hooks/use-subagent-context'
 import { useTeamSidechains } from '../../hooks/use-teams'
 import { formatModelName } from '../../lib/format-model'
 import { formatCostUsd } from '../../lib/format-utils'
@@ -90,7 +94,11 @@ interface SessionDetailPanelProps {
 // Tab configuration
 // ---------------------------------------------------------------------------
 
-const TABS: { id: TabId; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+const TABS: {
+  id: TabId
+  label: string
+  icon: React.ComponentType<{ className?: string }>
+}[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'chat', label: 'Chat', icon: MessageSquare },
   { id: 'sub-agents', label: 'Sub-Agents', icon: Users },
@@ -239,12 +247,20 @@ export function SessionDetailPanel({
   const [activeTab, setActiveTabRaw] = useState<TabId>(resolvedTab)
   const displayMode = useMonitorStore((s) => s.displayMode)
 
-  // Per-sub-agent context window, read from the sub-agent transcripts.
-  // Polled while a live session's Sub-Agents tab is open.
+  // Per-sub-agent context window and cost, read from the sub-agent transcripts.
+  // Fetched whenever the session has sub-agents (the header and Overview show
+  // their cost); polled while a live session runs. The server re-reads only
+  // transcripts that grew.
   const subAgentContexts = useSubAgentContext(
     data.id,
-    activeTab === 'sub-agents' && !!hasSubAgents,
+    !!hasSubAgents,
     isLive && data.status !== 'done',
+  )
+  // Sub-agents with cost from their own transcripts. Background agents report
+  // no usage to the parent transcript, so without this their cost is $0.
+  const subAgents = useMemo(
+    () => withTranscriptCosts(data.subAgents, subAgentContexts),
+    [data.subAgents, subAgentContexts],
   )
 
   // Wrap setActiveTab to also persist the preference
@@ -383,7 +399,7 @@ export function SessionDetailPanel({
   // - If rich/live-calculated cost exists, use it (matches live parser math).
   // - Fall back to DB total_cost_usd only when rich data is unavailable.
   const dbCostUsd = data.historyExtras?.sessionInfo?.totalCostUsd
-  const subAgentCostUsd = data.subAgents?.reduce((s, a) => s + (a.costUsd ?? 0), 0) ?? 0
+  const subAgentCostUsd = subAgents?.reduce((s, a) => s + (a.costUsd ?? 0), 0) ?? 0
   const sidechainCostUsd = sidechainsData?.reduce((s, sc) => s + (sc.costUsd ?? 0), 0) ?? 0
   const calculatedCostUsd = data.cost.totalUsd + subAgentCostUsd + sidechainCostUsd
   const totalCostUsd = calculatedCostUsd > 0 ? calculatedCostUsd : (dbCostUsd ?? 0)
@@ -690,9 +706,14 @@ export function SessionDetailPanel({
                   <span>CacheW: ${(data.cost?.cacheCreationCostUsd ?? 0).toFixed(2)}</span>
                 </div>
                 {hasSubAgents && (
-                  <div className="mt-0.5 text-xs font-mono text-gray-400 dark:text-gray-500 tabular-nums">
+                  <div
+                    className="mt-0.5 text-xs font-mono text-gray-400 dark:text-gray-500 tabular-nums"
+                    title={LIST_PRICE_TITLE}
+                    data-testid="overview-subagent-cost"
+                  >
                     + {data.subAgents?.length ?? 0} sub-agent
-                    {(data.subAgents?.length ?? 0) !== 1 ? 's' : ''}: ${subAgentCostUsd.toFixed(2)}
+                    {(data.subAgents?.length ?? 0) !== 1 ? 's' : ''}: ${subAgentCostUsd.toFixed(2)}{' '}
+                    (list price)
                   </div>
                 )}
                 {hasCacheCreationSplit && (
@@ -866,7 +887,11 @@ export function SessionDetailPanel({
                       updatedPermissions: perms,
                     }),
                   answerQuestion: (rid, answers) =>
-                    convDispatch({ type: 'ANSWER_QUESTION', requestId: rid, answers }),
+                    convDispatch({
+                      type: 'ANSWER_QUESTION',
+                      requestId: rid,
+                      answers,
+                    }),
                   approvePlan: (rid, approved, feedback, bypassPermissions) =>
                     convDispatch({
                       type: 'APPROVE_PLAN',
@@ -876,7 +901,11 @@ export function SessionDetailPanel({
                       bypassPermissions,
                     }),
                   submitElicitation: (rid, response) =>
-                    convDispatch({ type: 'SUBMIT_ELICITATION', requestId: rid, response }),
+                    convDispatch({
+                      type: 'SUBMIT_ELICITATION',
+                      requestId: rid,
+                      response,
+                    }),
                 }}
               >
                 <ConversationThread
@@ -910,7 +939,7 @@ export function SessionDetailPanel({
                 {/* Swim lanes (~50% height) */}
                 <div className="flex-1 min-h-0 overflow-y-auto p-4">
                   <SwimLanes
-                    subAgents={data.subAgents ?? []}
+                    subAgents={subAgents ?? []}
                     sessionActive={data.status === 'working'}
                     onDrillDown={handleDrillDown}
                     contexts={subAgentContexts}
@@ -959,7 +988,7 @@ export function SessionDetailPanel({
             <CostBreakdown
               cost={data.cost}
               tokens={data.tokens}
-              subAgents={data.subAgents}
+              subAgents={subAgents}
               sidechains={sidechainsData}
             />
           </div>

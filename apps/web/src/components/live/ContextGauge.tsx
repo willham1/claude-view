@@ -1,7 +1,11 @@
 import { Minimize2 } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { getContextLimit } from '../../lib/model-context-windows'
+import {
+  AUTOCOMPACT_RESERVE_TOKENS,
+  autocompactThresholdPct,
+  getContextLimit,
+} from '../../lib/model-context-windows'
 import type { AgentStateGroup } from './types'
 
 interface ContextGaugeProps {
@@ -55,9 +59,6 @@ const SEGMENT_COLORS = {
   buffer: 'bg-amber-400 dark:bg-amber-500',
 }
 
-/** Approximate context percentage at which Claude Code triggers auto-compaction. */
-const AUTOCOMPACT_THRESHOLD_PCT = 80
-
 export function ContextGauge({
   contextWindowTokens,
   model,
@@ -75,6 +76,8 @@ export function ContextGauge({
   statuslineTotalOutputTokens,
 }: ContextGaugeProps) {
   const contextLimit = getContextLimit(model, contextWindowTokens, statuslineContextWindowSize)
+  // Context percentage at which Claude Code auto-compacts (window − 33k).
+  const autocompactPct = autocompactThresholdPct(contextLimit)
   // Prefer authoritative statusline percentage; fall back to computed from tokens
   const usedPct = Math.min(statuslineUsedPct ?? (contextWindowTokens / contextLimit) * 100, 100)
   const [isOpen, setIsOpen] = useState(false)
@@ -161,7 +164,7 @@ export function ContextGauge({
   // Estimate breakdown
   const systemEstimate = Math.min(20_000, contextWindowTokens)
   const messagesEstimate = Math.max(0, contextWindowTokens - systemEstimate)
-  const autocompactBuffer = Math.round(contextLimit * 0.165)
+  const autocompactBuffer = Math.min(AUTOCOMPACT_RESERVE_TOKENS, contextLimit)
   const freeSpace = Math.max(0, contextLimit - contextWindowTokens - autocompactBuffer)
 
   // Segment percentages for stacked bar
@@ -236,11 +239,11 @@ export function ContextGauge({
           {!isCompacting && (
             <div
               className={`absolute top-[-1px] bottom-[-1px] w-[1.5px] rounded-full transition-opacity duration-300 ${
-                usedPct >= AUTOCOMPACT_THRESHOLD_PCT
+                usedPct >= autocompactPct
                   ? 'bg-white opacity-90'
                   : 'bg-gray-400 dark:bg-gray-600 opacity-40'
               }`}
-              style={{ left: `${AUTOCOMPACT_THRESHOLD_PCT}%` }}
+              style={{ left: `${autocompactPct}%` }}
               title="~auto-compact threshold"
             />
           )}
@@ -424,11 +427,11 @@ export function ContextGauge({
         {!isCompacting && (
           <div
             className={`absolute top-[-1px] bottom-[-1px] w-[1.5px] rounded-full transition-opacity duration-300 ${
-              usedPct >= AUTOCOMPACT_THRESHOLD_PCT
+              usedPct >= autocompactPct
                 ? 'bg-white opacity-90'
                 : 'bg-gray-400 dark:bg-gray-600 opacity-40'
             }`}
-            style={{ left: `${AUTOCOMPACT_THRESHOLD_PCT}%` }}
+            style={{ left: `${autocompactPct}%` }}
             title="~auto-compact threshold"
           />
         )}

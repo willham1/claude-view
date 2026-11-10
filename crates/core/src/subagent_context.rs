@@ -7,7 +7,11 @@
 //! `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`
 //! (the same formula the main session's Context Window panel uses).
 
+use std::collections::HashMap;
+
 use serde::Serialize;
+
+use crate::pricing::{calculate_cost, extract_usage_tokens, load_pricing, TokenUsage};
 
 /// Context-window figures for one sub-agent.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -33,6 +37,36 @@ pub struct SubAgentContext {
     /// Unix seconds of the latest assistant line with usage.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_activity_at: Option<i64>,
+    /// Cost of the sub-agent's own requests at Anthropic list prices (USD),
+    /// each request priced with its model's rates and its cache writes split
+    /// by 5-minute / 1-hour lifetime. `None` when no request could be priced.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+    /// True when some requests used a model with no known price (their
+    /// tokens are left out of `cost_usd`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub has_unpriced_usage: bool,
+}
+
+/// Price each request (model + usage) and sum. Returns (cost, any unpriced).
+fn price_requests(requests: &[(Option<String>, TokenUsage)]) -> (Option<f64>, bool) {
+    if requests.is_empty() {
+        return (None, false);
+    }
+    let pricing = load_pricing();
+    let mut total = 0.0;
+    let mut priced_any = false;
+    let mut unpriced = false;
+    for (model, tokens) in requests {
+        let cost = calculate_cost(tokens, model.as_deref(), &pricing);
+        if cost.has_unpriced_usage || model.is_none() {
+            unpriced = true;
+        } else {
+            priced_any = true;
+            total += cost.total_usd;
+        }
+    }
+    (priced_any.then_some(total), unpriced)
 }
 
 /// Summarise a sub-agent JSONL transcript. Lines that are not JSON, not
@@ -43,6 +77,10 @@ pub fn summarize_subagent_jsonl(agent_id: &str, text: &str) -> SubAgentContext {
         ..Default::default()
     };
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Usage per request for pricing. A response split over several lines
+    // repeats its usage; the latest line of a message id wins.
+    let mut requests: Vec<(Option<String>, TokenUsage)> = Vec::new();
+    let mut request_index: HashMap<String, usize> = HashMap::new();
 
     for line in text.lines() {
         if !line.contains("\"usage\"") {
@@ -74,6 +112,21 @@ pub fn summarize_subagent_jsonl(agent_id: &str, text: &str) -> SubAgentContext {
             Some(id) => seen.insert(id.clone()),
             None => true,
         };
+        let req_model = msg
+            .get("model")
+            .and_then(|x| x.as_str())
+            .filter(|m| !m.starts_with('<'))
+            .map(str::to_string);
+        let req = (req_model, extract_usage_tokens(usage));
+        match msg_id.as_ref().and_then(|id| request_index.get(id)) {
+            Some(&i) => requests[i] = req,
+            None => {
+                if let Some(id) = &msg_id {
+                    request_index.insert(id.clone(), requests.len());
+                }
+                requests.push(req);
+            }
+        }
         if is_new {
             if out.request_count == 0 {
                 out.start_context_tokens = ctx;
@@ -94,6 +147,9 @@ pub fn summarize_subagent_jsonl(agent_id: &str, text: &str) -> SubAgentContext {
             }
         }
     }
+    let (cost, unpriced) = price_requests(&requests);
+    out.cost_usd = cost;
+    out.has_unpriced_usage = unpriced;
     out
 }
 
@@ -136,6 +192,44 @@ mod tests {
         assert_eq!(s.current_context_tokens, 20501);
         assert_eq!(s.model.as_deref(), Some("claude-test-1"));
         assert_eq!(s.last_activity_at, Some(1767225620));
+    }
+
+    fn priced(id: &str, model: &str, usage: &str) -> String {
+        format!(
+            r#"{{"type":"assistant","message":{{"id":"{id}","model":"{model}","content":[],"usage":{usage}}}}}"#
+        )
+    }
+
+    #[test]
+    fn cost_prices_each_request_with_its_model_and_cache_split() {
+        // Made-up usage. Opus 5.5: $4 in / $20 out / $5 5m / $8 1h / $0.20 read.
+        let r1 = r#"{"input_tokens":1000,"output_tokens":2000,"cache_read_input_tokens":0,"cache_creation_input_tokens":30000,"cache_creation":{"ephemeral_5m_input_tokens":10000,"ephemeral_1h_input_tokens":20000}}"#;
+        // Same id again with a larger output count (streaming): latest wins.
+        let r1b = r#"{"input_tokens":1000,"output_tokens":3000,"cache_read_input_tokens":0,"cache_creation_input_tokens":30000,"cache_creation":{"ephemeral_5m_input_tokens":10000,"ephemeral_1h_input_tokens":20000}}"#;
+        // Haiku 5.5: $0.10 in / $0.50 out / $0.01 read.
+        let r2 = r#"{"input_tokens":500,"output_tokens":1000,"cache_read_input_tokens":100000,"cache_creation_input_tokens":0}"#;
+        let text = [
+            priced("m1", "claude-opus-5-5", r1),
+            priced("m1", "claude-opus-5-5", r1b),
+            priced("m2", "claude-haiku-5-5", r2),
+        ]
+        .join("\n");
+        let s = summarize_subagent_jsonl("a", &text);
+        // m1: 1000*4 + 3000*20 + 10000*5 + 20000*8 = 274_000 µ$ = $0.274
+        // m2: 500*0.1 + 1000*0.5 + 100000*0.01 = 1_550 µ$ = $0.00155
+        let want = 0.274 + 0.00155;
+        let got = s.cost_usd.expect("priced");
+        assert!((got - want).abs() < 1e-9, "got {got}, want {want}");
+        assert!(!s.has_unpriced_usage);
+        assert_eq!(s.request_count, 2);
+    }
+
+    #[test]
+    fn cost_is_none_for_unknown_model_and_flags_unpriced() {
+        let u = r#"{"input_tokens":10,"output_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}"#;
+        let s = summarize_subagent_jsonl("a", &priced("m1", "gpt-made-up", u));
+        assert_eq!(s.cost_usd, None);
+        assert!(s.has_unpriced_usage);
     }
 
     #[test]

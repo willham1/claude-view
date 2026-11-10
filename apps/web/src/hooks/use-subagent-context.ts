@@ -15,7 +15,43 @@ export interface SubAgentContext {
   currentContextTokens: number
   peakContextTokens: number
   lastActivityAt?: number
+  /**
+   * Cost of the sub-agent's own requests at Anthropic list prices (USD), from
+   * its transcript usage; cache writes priced by their 5m/1h split.
+   */
+  costUsd?: number
+  /** Some requests used a model with no known price (left out of costUsd). */
+  hasUnpricedUsage?: boolean
 }
+
+/**
+ * Cost of one sub-agent: from its own transcript when known, else the cost
+ * the parent transcript reported for it (foreground agents only).
+ */
+export function subAgentCostUsd(
+  agent: Pick<SubAgentInfo, 'agentId' | 'toolUseId' | 'costUsd'>,
+  contexts: SubAgentContext[] | undefined,
+): number | null {
+  const fromTranscript = findSubAgentContext(agent, contexts)?.costUsd
+  if (fromTranscript != null) return fromTranscript
+  return agent.costUsd ?? null
+}
+
+/** Sub-agents with `costUsd` filled from their transcripts where known. */
+export function withTranscriptCosts(
+  agents: SubAgentInfo[] | undefined,
+  contexts: SubAgentContext[] | undefined,
+): SubAgentInfo[] | undefined {
+  if (!agents || !contexts || contexts.length === 0) return agents
+  return agents.map((a) => {
+    const cost = subAgentCostUsd(a, contexts)
+    return cost === (a.costUsd ?? null) ? a : { ...a, costUsd: cost }
+  })
+}
+
+/** Tooltip text for list-price figures (the owner is on a subscription). */
+export const LIST_PRICE_TITLE =
+  'List-price equivalent: what these tokens would cost at Anthropic API rates. Not billed on a subscription.'
 
 /** Find the context entry for a sub-agent: by agentId, else by spawning toolUseId. */
 export function findSubAgentContext(

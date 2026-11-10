@@ -230,6 +230,7 @@ pub fn test_live_session(id: &str) -> LiveSession {
             cache_status: CacheStatus::Unknown,
             last_turn_task_seconds: None,
             last_cache_hit_at: None,
+            cache_ttl_seconds: None,
             team_name: None,
             team_members: Vec::new(),
             team_inbox_count: 0,

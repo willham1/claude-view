@@ -1107,6 +1107,7 @@ fn minimal_jsonl_metadata() -> JsonlMetadata {
         team_name: None,
         progress_items: Vec::new(),
         last_cache_hit_at: None,
+        cache_ttl_seconds: None,
         tools_used: Vec::new(),
         compact_count: 0,
         slug: None,

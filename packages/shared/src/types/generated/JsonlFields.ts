@@ -72,6 +72,12 @@ export type JsonlFields = {
    */
   lastCacheHitAt: number | null
   /**
+   * Prompt-cache lifetime in seconds of the latest cache write: 3600 when it
+   * used the 1-hour cache, 300 when it used the 5-minute cache.
+   * Null until a write with a 5m/1h split is seen (treat as 300).
+   */
+  cacheTtlSeconds?: number | null
+  /**
    * Team name if this session is a team lead.
    * Populated from the top-level `teamName` field in the JSONL (present after TeamCreate).
    * Frontend uses this to show team badge instead of sub-agent pills.

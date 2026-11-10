@@ -54,6 +54,13 @@ impl LiveSessionManager {
                 acc.last_cache_hit_at = parse_timestamp_to_unix(ts);
             }
         }
+        // Track the TTL of the latest cache write (1h vs 5m)
+        if let Some(ttl) = claude_view_core::cache_ttl::ttl_for_cache_write(
+            line.cache_creation_5m_tokens,
+            line.cache_creation_1hr_tokens,
+        ) {
+            acc.cache_ttl_seconds = Some(ttl);
+        }
 
         // Accumulate tool counts
         for name in &line.tool_names {

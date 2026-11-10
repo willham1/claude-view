@@ -53,6 +53,11 @@ pub struct JsonlFields {
     /// Null if no cache activity has been detected (e.g., new session or below minimum tokens).
     #[ts(type = "number | null")]
     pub last_cache_hit_at: Option<i64>,
+    /// Prompt-cache lifetime in seconds of the latest cache write: 3600 when it
+    /// used the 1-hour cache, 300 when it used the 5-minute cache.
+    /// Null until a write with a 5m/1h split is seen (treat as 300).
+    #[ts(type = "number | null")]
+    pub cache_ttl_seconds: Option<u32>,
     /// Team name if this session is a team lead.
     /// Populated from the top-level `teamName` field in the JSONL (present after TeamCreate).
     /// Frontend uses this to show team badge instead of sub-agent pills.
@@ -112,6 +117,7 @@ impl Default for JsonlFields {
             cache_status: CacheStatus::Unknown,
             last_turn_task_seconds: None,
             last_cache_hit_at: None,
+            cache_ttl_seconds: None,
             team_name: None,
             team_members: Vec::new(),
             team_inbox_count: 0,

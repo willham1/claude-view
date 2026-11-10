@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
+import { type SubAgentContext, findSubAgentContext } from '../../hooks/use-subagent-context'
 import type { SubAgentInfo } from '../../types/generated/SubAgentInfo'
 import { SwimLanes } from './SwimLanes'
 
@@ -253,5 +254,79 @@ describe('SwimLanes', () => {
       const wrapper = container.firstElementChild
       expect(wrapper?.className).not.toContain('overflow-y-auto')
     })
+  })
+
+  describe('context window', () => {
+    const ctx = (overrides?: Partial<SubAgentContext>): SubAgentContext => ({
+      agentId: 'abc1',
+      toolUseId: 'toolu_spawn',
+      model: 'claude-test-1',
+      requestCount: 4,
+      startContextTokens: 9_200,
+      currentContextTokens: 41_000,
+      peakContextTokens: 45_500,
+      ...overrides,
+    })
+
+    it('shows start, now and peak for a finished agent matched by agentId', () => {
+      const agent = makeSubAgent({ status: 'complete', agentId: 'abc1', toolUseId: 'other' })
+      render(<SwimLanes subAgents={[agent]} contexts={[ctx()]} />)
+      const row = screen.getByTestId('subagent-context')
+      expect(row.textContent).toContain('start 9.2k')
+      expect(row.textContent).toContain('now 41.0k')
+      expect(row.textContent).toContain('peak 45.5k')
+      expect(row.textContent).toContain('200.0k')
+      expect(row.textContent).toContain('21%')
+    })
+
+    it('matches a running agent with no agentId yet by its spawning toolUseId', () => {
+      const agent = makeSubAgent({ toolUseId: 'toolu_spawn', agentId: null })
+      render(<SwimLanes subAgents={[agent]} contexts={[ctx({ agentId: 'zzz' })]} />)
+      expect(screen.getByTestId('subagent-context').textContent).toContain('now 41.0k')
+    })
+
+    it('uses a 1M window once a sub-agent has gone past 200k', () => {
+      const agent = makeSubAgent({ agentId: 'abc1' })
+      render(
+        <SwimLanes
+          subAgents={[agent]}
+          contexts={[ctx({ currentContextTokens: 250_000, peakContextTokens: 250_000 })]}
+        />,
+      )
+      expect(screen.getByTestId('subagent-context').textContent).toContain('1.0M')
+    })
+
+    it('shows nothing when no context is known', () => {
+      const agent = makeSubAgent({ agentId: 'abc1' })
+      render(<SwimLanes subAgents={[agent]} contexts={[ctx({ requestCount: 0 })]} />)
+      expect(screen.queryByTestId('subagent-context')).toBeNull()
+    })
+  })
+})
+
+describe('findSubAgentContext', () => {
+  it('prefers agentId and falls back to toolUseId', () => {
+    const list: SubAgentContext[] = [
+      {
+        agentId: 'a',
+        toolUseId: 't1',
+        requestCount: 1,
+        startContextTokens: 1,
+        currentContextTokens: 1,
+        peakContextTokens: 1,
+      },
+      {
+        agentId: 'b',
+        toolUseId: 't2',
+        requestCount: 1,
+        startContextTokens: 2,
+        currentContextTokens: 2,
+        peakContextTokens: 2,
+      },
+    ]
+    expect(findSubAgentContext({ agentId: 'b', toolUseId: 't1' }, list)?.agentId).toBe('b')
+    expect(findSubAgentContext({ agentId: null, toolUseId: 't1' }, list)?.agentId).toBe('a')
+    expect(findSubAgentContext({ agentId: 'x', toolUseId: 'nope' }, list)).toBeUndefined()
+    expect(findSubAgentContext({ agentId: 'a', toolUseId: 't1' }, undefined)).toBeUndefined()
   })
 })

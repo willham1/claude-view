@@ -104,6 +104,8 @@ pub(crate) struct SessionAccumulator {
     pub task_items: Vec<claude_view_core::progress::ProgressItem>,
     /// Unix timestamp of the most recent cache hit or creation.
     pub last_cache_hit_at: Option<i64>,
+    /// Prompt-cache TTL (seconds) of the latest cache write (3600 or 300).
+    pub cache_ttl_seconds: Option<u32>,
     /// Unique MCP server names seen (deduplicated).
     pub mcp_servers: HashSet<String>,
     /// Unique skill names seen (deduplicated).
@@ -180,6 +182,7 @@ impl SessionAccumulator {
             todo_items: Vec::new(),
             task_items: Vec::new(),
             last_cache_hit_at: None,
+            cache_ttl_seconds: None,
             mcp_servers: HashSet::new(),
             skills: HashSet::new(),
             at_files: HashSet::new(),
@@ -233,6 +236,7 @@ pub(super) struct JsonlMetadata {
     pub team_name: Option<String>,
     pub progress_items: Vec<claude_view_core::progress::ProgressItem>,
     pub last_cache_hit_at: Option<i64>,
+    pub cache_ttl_seconds: Option<u32>,
     pub tools_used: Vec<crate::live::state::ToolUsed>,
     pub compact_count: u32,
     pub slug: Option<String>,
@@ -450,6 +454,7 @@ pub(super) fn apply_jsonl_metadata(
     session.hook.progress_items = m.progress_items.clone();
     session.jsonl.tools_used = m.tools_used.clone();
     session.jsonl.last_cache_hit_at = m.last_cache_hit_at;
+    session.jsonl.cache_ttl_seconds = m.cache_ttl_seconds;
     session.hook.compact_count = m.compact_count;
     session.jsonl.slug = m.slug.clone();
     if m.user_files.is_some() {
@@ -491,7 +496,8 @@ pub(super) fn build_metadata_from_accumulator(
     let cache_status = match acc.last_cache_hit_at {
         Some(ts) => {
             let secs = seconds_since_modified_from_timestamp(ts);
-            if secs < 300 {
+            let ttl = claude_view_core::cache_ttl::effective_ttl(acc.cache_ttl_seconds) as u64;
+            if secs < ttl {
                 CacheStatus::Warm
             } else {
                 CacheStatus::Cold
@@ -547,6 +553,7 @@ pub(super) fn build_metadata_from_accumulator(
             tools
         },
         last_cache_hit_at: acc.last_cache_hit_at,
+        cache_ttl_seconds: acc.cache_ttl_seconds,
         compact_count: acc.compact_count,
         slug: acc.slug.clone(),
         user_files: resolve_accumulated_files(

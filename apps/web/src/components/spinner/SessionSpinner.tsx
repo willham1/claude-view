@@ -1,4 +1,5 @@
 import { useMediaQuery } from '@/hooks/use-media-query'
+import { cacheRemainingSeconds, effectiveCacheTtl } from '@/lib/cache-ttl'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { useEffect, useState } from 'react'
 import {
@@ -28,6 +29,8 @@ interface LiveSpinnerProps extends BaseSpinnerProps {
   agentStateKey?: string
   spinnerVerb?: string
   lastCacheHitAt?: number | null
+  /** TTL (seconds) of the latest prompt-cache write: 3600 or 300; null = 300. */
+  cacheTtlSeconds?: number | null
   lastTurnTaskSeconds?: number | null
 }
 
@@ -143,12 +146,11 @@ export function SessionSpinner(props: SessionSpinnerProps) {
     const lastTurnTaskSeconds = props.mode === 'live' ? props.lastTurnTaskSeconds : null
     const hasBakedTime = lastTurnTaskSeconds != null && lastTurnTaskSeconds > 0
 
-    const CACHE_TTL = 300
-    const lastCacheHit = lastCacheHitAt
-    const hasCacheHit = lastCacheHit != null && lastCacheHit > 0
+    // TTL of the session's latest cache write (1h or 5m; 5m when unknown)
+    const cacheTtl = effectiveCacheTtl(props.mode === 'live' ? props.cacheTtlSeconds : null)
+    const hasCacheHit = lastCacheHitAt != null && lastCacheHitAt > 0
 
-    const elapsed = hasCacheHit ? Math.floor(Date.now() / 1000) - lastCacheHit : CACHE_TTL
-    const remaining = Math.max(0, CACHE_TTL - elapsed)
+    const remaining = cacheRemainingSeconds(lastCacheHitAt, cacheTtl)
 
     const showCountdown = hasCacheHit
 
@@ -160,9 +162,9 @@ export function SessionSpinner(props: SessionSpinnerProps) {
     const countdownColor =
       remaining <= 0
         ? 'text-gray-400'
-        : remaining < 60
+        : remaining < cacheTtl * 0.2
           ? 'text-red-500'
-          : remaining < 180
+          : remaining < cacheTtl * 0.6
             ? 'text-amber-500'
             : 'text-green-500'
 
@@ -182,7 +184,7 @@ export function SessionSpinner(props: SessionSpinnerProps) {
           </>
         )}
         {showCountdown ? (
-          <CacheCountdownTooltip remaining={remaining} ttl={CACHE_TTL}>
+          <CacheCountdownTooltip remaining={remaining} ttl={cacheTtl}>
             <span
               className={`font-mono tabular-nums cursor-default ${countdownColor}`}
               title={remaining > 0 ? 'Cache warm' : 'Cache cold'}
@@ -315,7 +317,9 @@ function CacheCountdownTooltip({
               </div>
               <div className="flex items-center justify-between text-gray-500 dark:text-gray-400">
                 <span>TTL</span>
-                <span className="tabular-nums font-mono">5 min</span>
+                <span className="tabular-nums font-mono">
+                  {ttl % 3600 === 0 ? `${ttl / 3600} h` : `${Math.round(ttl / 60)} min`}
+                </span>
               </div>
               <div className="flex items-center justify-between text-gray-500 dark:text-gray-400">
                 <span>Resets on</span>

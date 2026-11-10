@@ -41,7 +41,10 @@ pub async fn estimate_cost(
 
     let history_tokens = session.total_input_tokens.unwrap_or(0);
     let last_activity = session.modified_at; // epoch seconds
-    let cache_warm = last_activity > 0 && (now - last_activity) < 300; // 5 min TTL
+
+    // TTL of the session's latest cache write (1h or 5m); 5m when unknown.
+    let cache_ttl = resolve_cache_ttl(&state, &req.session_id, &session.file_path).await;
+    let cache_warm = claude_view_core::cache_ttl::is_cache_warm(last_activity, now, cache_ttl);
 
     // Look up model pricing
     let pricing = &*state.pricing;
@@ -111,4 +114,57 @@ pub async fn estimate_cost(
         files_edited: session.files_edited_count,
         last_active_secs_ago: secs_ago,
     }))
+}
+
+/// Cache TTL of the session's latest cache write: from the live accumulator
+/// when the session is live, else from the tail of its JSONL file.
+async fn resolve_cache_ttl(state: &AppState, session_id: &str, file_path: &str) -> Option<u32> {
+    {
+        let map = state.live_sessions.read().await;
+        if let Some(ttl) = map.get(session_id).and_then(|s| s.jsonl.cache_ttl_seconds) {
+            return Some(ttl);
+        }
+    }
+    if file_path.is_empty() {
+        return None;
+    }
+    let path = std::path::PathBuf::from(file_path);
+    tokio::task::spawn_blocking(move || read_tail_cache_ttl(&path))
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Read the last 512 KiB of a JSONL file and find the latest cache-write TTL.
+fn read_tail_cache_ttl(path: &std::path::Path) -> Option<u32> {
+    use std::io::{Read, Seek, SeekFrom};
+    const TAIL_BYTES: u64 = 512 * 1024;
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    f.seek(SeekFrom::Start(len.saturating_sub(TAIL_BYTES)))
+        .ok()?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).ok()?;
+    claude_view_core::cache_ttl::latest_cache_ttl_in_jsonl(&String::from_utf8_lossy(&buf))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_tail_cache_ttl;
+
+    #[test]
+    fn tail_scan_reads_one_hour_ttl_from_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("s.jsonl");
+        std::fs::write(
+            &p,
+            concat!(
+                r#"{"type":"assistant","message":{"usage":{"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":42}}}}"#,
+                "\n"
+            ),
+        )
+        .unwrap();
+        assert_eq!(read_tail_cache_ttl(&p), Some(3600));
+        assert_eq!(read_tail_cache_ttl(&dir.path().join("missing.jsonl")), None);
+    }
 }

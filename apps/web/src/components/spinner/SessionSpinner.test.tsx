@@ -27,7 +27,10 @@ function createMockMediaQueryList(matches: boolean): MockMediaQueryList {
   }
 }
 
-function renderNeedsYouSpinner(lastCacheHitAt: number | null = Math.floor(Date.now() / 1000) - 30) {
+function renderNeedsYouSpinner(
+  lastCacheHitAt: number | null = Math.floor(Date.now() / 1000) - 30,
+  cacheTtlSeconds: number | null = null,
+) {
   return render(
     <SessionSpinner
       mode="live"
@@ -38,6 +41,7 @@ function renderNeedsYouSpinner(lastCacheHitAt: number | null = Math.floor(Date.n
       agentStateGroup="needs_you"
       spinnerVerb="Working"
       lastCacheHitAt={lastCacheHitAt}
+      cacheTtlSeconds={cacheTtlSeconds}
     />,
   )
 }
@@ -99,5 +103,27 @@ describe('SessionSpinner', () => {
     const dash = screen.getByTitle('No cache activity yet')
     expect(dash).toBeInTheDocument()
     expect(dash.textContent).toContain('–')
+  })
+
+  it('stays warm 10 minutes after the last hit when the cache write was 1 hour', () => {
+    renderNeedsYouSpinner(Math.floor(Date.now() / 1000) - 600, 3600)
+    const trigger = screen.getByTitle('Cache warm')
+    // 60:00 - 10:00 = ~50:00 left
+    expect(trigger.textContent).toMatch(/(49|50):\d{2}/)
+  })
+
+  it('is cold 10 minutes after the last hit when the cache write was 5 minutes', () => {
+    renderNeedsYouSpinner(Math.floor(Date.now() / 1000) - 600, 300)
+    expect(screen.getByTitle('Cache cold')).toBeInTheDocument()
+  })
+
+  it('shows a 1 h TTL in the tooltip for a 1-hour cache', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    renderNeedsYouSpinner(Math.floor(Date.now() / 1000) - 30, 3600)
+    await user.hover(screen.getByTitle('Cache warm'))
+    await waitFor(() => {
+      expect(getPopperWrapper()).not.toBeNull()
+    })
+    expect(getPopperWrapper()?.textContent).toContain('1 h')
   })
 })

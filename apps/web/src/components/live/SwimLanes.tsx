@@ -1,7 +1,10 @@
 import { useMemo } from 'react'
+import { type SubAgentContext, findSubAgentContext } from '../../hooks/use-subagent-context'
 import { formatCostUsd } from '../../lib/format-utils'
+import { getContextLimit } from '../../lib/model-context-windows'
 import { cn } from '../../lib/utils'
 import type { SubAgentInfo } from '../../types/generated/SubAgentInfo'
+import { formatTokensCompact } from '../spinner/constants'
 
 interface SwimLanesProps {
   subAgents: SubAgentInfo[]
@@ -9,6 +12,41 @@ interface SwimLanesProps {
   sessionActive?: boolean
   /** Called when a sub-agent row is clicked to drill down into its conversation */
   onDrillDown?: (agentId: string, agentType: string, description: string) => void
+  /** Per-sub-agent context-window usage read from the sub-agent transcripts. */
+  contexts?: SubAgentContext[]
+}
+
+/**
+ * Context-window line for one sub-agent: size at its first request, now, and
+ * at its largest request, plus a bar of the current fill against the window.
+ */
+export function SubAgentContextRow({ ctx }: { ctx: SubAgentContext }) {
+  const limit = getContextLimit(ctx.model ?? null, ctx.peakContextTokens)
+  const pct = Math.min((ctx.currentContextTokens / limit) * 100, 100)
+  const barColor = pct >= 80 ? 'bg-red-500' : pct >= 60 ? 'bg-amber-500' : 'bg-sky-500'
+  const dot = <span className="text-gray-300 dark:text-gray-600">&middot;</span>
+  return (
+    <div
+      className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 pl-4 text-xs font-mono text-gray-400 dark:text-gray-500 [&>span]:whitespace-nowrap"
+      data-testid="subagent-context"
+      title={`${ctx.requestCount} request${ctx.requestCount !== 1 ? 's' : ''}; context = input + cache read + cache write tokens`}
+    >
+      <span className="text-gray-500 dark:text-gray-400">ctx</span>
+      <span>start {formatTokensCompact(ctx.startContextTokens)}</span>
+      {dot}
+      <span className="text-gray-700 dark:text-gray-300">
+        now {formatTokensCompact(ctx.currentContextTokens)}
+      </span>
+      {dot}
+      <span>peak {formatTokensCompact(ctx.peakContextTokens)}</span>
+      <span className="text-gray-300 dark:text-gray-600">/</span>
+      <span>{formatTokensCompact(limit)}</span>
+      <div className="ml-1 w-16 h-1 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden flex-shrink-0">
+        <div className={cn(barColor, 'h-full rounded-full')} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="tabular-nums">{Math.round(pct)}%</span>
+    </div>
+  )
 }
 
 function formatCost(usd: number): string {
@@ -58,11 +96,12 @@ function ProgressBar() {
  * - Description text
  * - For running: current activity or progress bar
  * - For finished: cost, duration, tool call count
+ * - When known: context window (start / now / peak) from the sub-agent transcript
  *
  * Clicking a row opens the terminal drill-down (when agentId is available).
  * Rows are sorted: running first (by startedAt), then completed (by completedAt desc).
  */
-export function SwimLanes({ subAgents, onDrillDown }: SwimLanesProps) {
+export function SwimLanes({ subAgents, onDrillDown, contexts }: SwimLanesProps) {
   // Sort: Running first (by startedAt asc), then Complete/Error (by completedAt desc)
   const sortedAgents = useMemo(() => {
     const running = subAgents
@@ -87,6 +126,7 @@ export function SwimLanes({ subAgents, onDrillDown }: SwimLanesProps) {
     >
       {sortedAgents.map((agent) => {
         const canDrillDown = !!agent.agentId && !!onDrillDown
+        const ctx = findSubAgentContext(agent, contexts)
 
         return (
           <div
@@ -169,6 +209,9 @@ export function SwimLanes({ subAgents, onDrillDown }: SwimLanesProps) {
                 )}
               </div>
             )}
+
+            {/* Row 3: context window (from the sub-agent's own transcript) */}
+            {ctx && ctx.requestCount > 0 && <SubAgentContextRow ctx={ctx} />}
           </div>
         )
       })}

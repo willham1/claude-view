@@ -30,6 +30,7 @@ use utoipa::OpenApi;
         crate::routes::sessions::bulk_unarchive_handler,
         crate::routes::sessions::get_session_hook_events,
         crate::routes::sessions::get_subagent_messages,
+        crate::routes::sessions::get_subagent_context,
         crate::routes::sessions::session_activity_rich,
         // Multi-provider
         crate::routes::profiles::list_profiles,

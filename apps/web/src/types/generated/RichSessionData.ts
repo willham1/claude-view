@@ -23,6 +23,7 @@ export type RichSessionData = {
   firstUserMessage: string | null
   lastUserMessage: string | null
   lastCacheHitAt: number | null
+  cacheTtlSeconds?: number | null
   slug: string | null
   /**
    * SDLC phase classification: current phase, label history, and dominant phase.

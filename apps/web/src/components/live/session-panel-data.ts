@@ -116,6 +116,8 @@ export interface SessionPanelData {
   lastActivityAt?: number
   lastUserMessage?: string
   lastCacheHitAt?: number | null
+  /** TTL (seconds) of the latest prompt-cache write: 3600 or 300; null = 300. */
+  cacheTtlSeconds?: number | null
   agentState?: AgentState
   pid?: number | null
   currentActivity?: string
@@ -193,6 +195,7 @@ export function liveSessionToPanelData(session: LiveSession): SessionPanelData {
     lastActivityAt: session.lastActivityAt,
     lastUserMessage: session.lastUserMessage,
     lastCacheHitAt: session.lastCacheHitAt,
+    cacheTtlSeconds: session.cacheTtlSeconds ?? null,
     agentState: session.agentState,
     pid: session.pid,
     currentActivity: session.currentActivity,

@@ -30,6 +30,7 @@ import { useCommandExecutor } from '../../hooks/use-command-executor'
 import { useFileHistory } from '../../hooks/use-file-history'
 import { usePlanDocuments } from '../../hooks/use-plan-documents'
 import { useSessionDetail } from '../../hooks/use-session-detail'
+import { useSubAgentContext } from '../../hooks/use-subagent-context'
 import { useTeamSidechains } from '../../hooks/use-teams'
 import { formatModelName } from '../../lib/format-model'
 import { formatCostUsd } from '../../lib/format-utils'
@@ -237,6 +238,14 @@ export function SessionDetailPanel({
   // ---- Local state ----
   const [activeTab, setActiveTabRaw] = useState<TabId>(resolvedTab)
   const displayMode = useMonitorStore((s) => s.displayMode)
+
+  // Per-sub-agent context window, read from the sub-agent transcripts.
+  // Polled while a live session's Sub-Agents tab is open.
+  const subAgentContexts = useSubAgentContext(
+    data.id,
+    activeTab === 'sub-agents' && !!hasSubAgents,
+    isLive && data.status !== 'done',
+  )
 
   // Wrap setActiveTab to also persist the preference
   const setActiveTab = useCallback(
@@ -711,6 +720,7 @@ export function SessionDetailPanel({
                   <CacheCountdownBar
                     lastCacheHitAt={data.lastCacheHitAt ?? null}
                     cacheStatus={data.cacheStatus}
+                    cacheTtlSeconds={data.cacheTtlSeconds ?? null}
                   />
                 </div>
               )}
@@ -903,6 +913,7 @@ export function SessionDetailPanel({
                     subAgents={data.subAgents ?? []}
                     sessionActive={data.status === 'working'}
                     onDrillDown={handleDrillDown}
+                    contexts={subAgentContexts}
                   />
                 </div>
 

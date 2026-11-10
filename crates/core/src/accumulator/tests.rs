@@ -1232,7 +1232,48 @@ mod tests {
 
     #[test]
     fn test_derive_cache_status_none() {
-        assert_eq!(derive_cache_status(None), CacheStatus::Unknown);
+        assert_eq!(derive_cache_status(None, None), CacheStatus::Unknown);
+        assert_eq!(derive_cache_status(None, Some(3600)), CacheStatus::Unknown);
+    }
+
+    #[test]
+    fn test_derive_cache_status_one_hour_ttl_still_warm_after_ten_minutes() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        assert_eq!(
+            derive_cache_status(Some(now - 600), Some(3600)),
+            CacheStatus::Warm
+        );
+        assert_eq!(
+            derive_cache_status(Some(now - 3700), Some(3600)),
+            CacheStatus::Cold
+        );
+    }
+
+    #[test]
+    fn test_accumulator_records_latest_cache_write_ttl() {
+        let mut acc = SessionAccumulator::new();
+        let pricing = HashMap::new();
+        let mk = |read: u64, c5: u64, c1: u64| {
+            let mut l = empty_line();
+            l.line_type = LineType::Assistant;
+            l.input_tokens = Some(3);
+            l.cache_read_tokens = Some(read);
+            l.cache_creation_tokens = Some(c5 + c1);
+            l.cache_creation_5m_tokens = Some(c5);
+            l.cache_creation_1hr_tokens = Some(c1);
+            l.timestamp = Some("2026-01-01T00:00:00.000Z".to_string());
+            l
+        };
+        acc.process_line(&mk(0, 0, 1000), 0, &pricing);
+        assert_eq!(acc.cache_ttl_seconds, Some(3600));
+        acc.process_line(&mk(1000, 0, 0), 0, &pricing);
+        assert_eq!(acc.cache_ttl_seconds, Some(3600), "a read keeps the TTL");
+        acc.process_line(&mk(0, 400, 0), 0, &pricing);
+        assert_eq!(acc.cache_ttl_seconds, Some(300));
+        assert_eq!(acc.finish(&pricing).cache_ttl_seconds, Some(300));
     }
 
     #[test]
@@ -1242,7 +1283,7 @@ mod tests {
             .unwrap()
             .as_secs() as i64;
         // 30 seconds ago = warm
-        assert_eq!(derive_cache_status(Some(now - 30)), CacheStatus::Warm);
+        assert_eq!(derive_cache_status(Some(now - 30), None), CacheStatus::Warm);
     }
 
     #[test]
@@ -1252,7 +1293,14 @@ mod tests {
             .unwrap()
             .as_secs() as i64;
         // 10 minutes ago = cold
-        assert_eq!(derive_cache_status(Some(now - 600)), CacheStatus::Cold);
+        assert_eq!(
+            derive_cache_status(Some(now - 600), None),
+            CacheStatus::Cold
+        );
+        assert_eq!(
+            derive_cache_status(Some(now - 600), Some(300)),
+            CacheStatus::Cold
+        );
     }
 
     #[test]

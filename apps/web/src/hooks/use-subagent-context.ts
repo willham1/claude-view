@@ -45,8 +45,12 @@ export function useSubAgentContext(
   useEffect(() => {
     if (!enabled || !sessionId) return
     let cancelled = false
+    // In-flight guard: a poll tick is skipped while the previous request runs.
+    let inFlight = false
     const url = `/api/sessions/${encodeURIComponent(sessionId)}/subagents/context`
     const load = () => {
+      if (inFlight) return
+      inFlight = true
       fetch(url)
         .then((r) => (r.ok ? r.json() : undefined))
         .then((json) => {
@@ -54,6 +58,9 @@ export function useSubAgentContext(
         })
         .catch(() => {
           /* keep the last good data */
+        })
+        .finally(() => {
+          inFlight = false
         })
     }
     load()

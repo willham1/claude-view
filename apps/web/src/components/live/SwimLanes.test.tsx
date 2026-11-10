@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { type SubAgentContext, findSubAgentContext } from '../../hooks/use-subagent-context'
 import type { SubAgentInfo } from '../../types/generated/SubAgentInfo'
-import { SwimLanes } from './SwimLanes'
+import { SubAgentContextRow, SwimLanes } from './SwimLanes'
 
 // Helper to create minimal SubAgentInfo fixture
 function makeSubAgent(overrides?: Partial<SubAgentInfo>): SubAgentInfo {
@@ -275,8 +275,10 @@ describe('SwimLanes', () => {
       expect(row.textContent).toContain('start 9.2k')
       expect(row.textContent).toContain('now 41.0k')
       expect(row.textContent).toContain('peak 45.5k')
-      expect(row.textContent).toContain('200.0k')
-      expect(row.textContent).toContain('21%')
+      expect(row.textContent).toContain('4 reqs')
+      // Window size unknown from the transcript: no guessed limit or percentage.
+      expect(row.textContent).not.toContain('200.0k')
+      expect(row.textContent).not.toContain('%')
     })
 
     it('matches a running agent with no agentId yet by its spawning toolUseId', () => {
@@ -285,15 +287,30 @@ describe('SwimLanes', () => {
       expect(screen.getByTestId('subagent-context').textContent).toContain('now 41.0k')
     })
 
-    it('uses a 1M window once a sub-agent has gone past 200k', () => {
+    it('does not guess a 200k window for a large sub-agent', () => {
       const agent = makeSubAgent({ agentId: 'abc1' })
       render(
         <SwimLanes
           subAgents={[agent]}
-          contexts={[ctx({ currentContextTokens: 250_000, peakContextTokens: 250_000 })]}
+          contexts={[ctx({ currentContextTokens: 170_000, peakContextTokens: 170_000 })]}
         />,
       )
-      expect(screen.getByTestId('subagent-context').textContent).toContain('1.0M')
+      const text = screen.getByTestId('subagent-context').textContent ?? ''
+      expect(text).toContain('now 170.0k')
+      expect(text).not.toContain('85%')
+      expect(text).not.toContain('%')
+    })
+
+    it('shows a bar and percentage when the window size is known', () => {
+      render(
+        <SubAgentContextRow
+          ctx={ctx({ currentContextTokens: 170_000, peakContextTokens: 170_000 })}
+          windowSize={1_000_000}
+        />,
+      )
+      const text = screen.getByTestId('subagent-context').textContent ?? ''
+      expect(text).toContain('1.0M')
+      expect(text).toContain('17%')
     })
 
     it('shows nothing when no context is known', () => {

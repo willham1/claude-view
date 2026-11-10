@@ -23,7 +23,11 @@ export type RichSessionData = {
   firstUserMessage: string | null
   lastUserMessage: string | null
   lastCacheHitAt: number | null
-  cacheTtlSeconds?: number | null
+  /**
+   * Prompt-cache TTL (seconds) of the latest cache write (3600 or 300);
+   * null when unknown (treat as 300).
+   */
+  cacheTtlSeconds: number | null
   slug: string | null
   /**
    * SDLC phase classification: current phase, label history, and dominant phase.

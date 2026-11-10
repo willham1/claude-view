@@ -21,12 +21,13 @@ pub const ONE_HOUR_CACHE_TTL_SECS: u32 = 3600;
 /// TTL implied by one usage record's cache-write split.
 ///
 /// Returns `None` when the record wrote nothing to the cache (so the caller
-/// keeps the previously known TTL).
+/// keeps the previously known TTL). A record that wrote both 5m and 1h
+/// tokens reports 5m: that part of the cache expires first.
 pub fn ttl_for_cache_write(creation_5m: Option<u64>, creation_1h: Option<u64>) -> Option<u32> {
-    if creation_1h.unwrap_or(0) > 0 {
-        Some(ONE_HOUR_CACHE_TTL_SECS)
-    } else if creation_5m.unwrap_or(0) > 0 {
+    if creation_5m.unwrap_or(0) > 0 {
         Some(DEFAULT_CACHE_TTL_SECS)
+    } else if creation_1h.unwrap_or(0) > 0 {
+        Some(ONE_HOUR_CACHE_TTL_SECS)
     } else {
         None
     }
@@ -81,6 +82,11 @@ mod tests {
     fn five_minute_write_gives_five_minutes() {
         assert_eq!(ttl_for_cache_write(Some(800), Some(0)), Some(300));
         assert_eq!(ttl_for_cache_write(Some(800), None), Some(300));
+    }
+
+    #[test]
+    fn mixed_write_reports_the_shorter_ttl() {
+        assert_eq!(ttl_for_cache_write(Some(100), Some(5000)), Some(300));
     }
 
     #[test]

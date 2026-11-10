@@ -117,6 +117,7 @@ function mockSession(overrides: Partial<LiveSession> = {}): LiveSession {
       { name: 'commit', kind: 'skill' },
     ],
     lastCacheHitAt: NOW - 30,
+    cacheTtlSeconds: 3600,
     compactCount: 1,
     slug: 'statusline-ui',
     closedAt: null,

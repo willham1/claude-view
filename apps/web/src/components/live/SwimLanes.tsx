@@ -1,7 +1,6 @@
 import { useMemo } from 'react'
 import { type SubAgentContext, findSubAgentContext } from '../../hooks/use-subagent-context'
 import { formatCostUsd } from '../../lib/format-utils'
-import { getContextLimit } from '../../lib/model-context-windows'
 import { cn } from '../../lib/utils'
 import type { SubAgentInfo } from '../../types/generated/SubAgentInfo'
 import { formatTokensCompact } from '../spinner/constants'
@@ -18,12 +17,24 @@ interface SwimLanesProps {
 
 /**
  * Context-window line for one sub-agent: size at its first request, now, and
- * at its largest request, plus a bar of the current fill against the window.
+ * at its largest request.
+ *
+ * A fill bar and percentage are shown only when the window size is known
+ * (`windowSize`, e.g. from Claude Code's status line). Sub-agent transcripts do
+ * not record whether a request ran with the 200k or the 1M window, so the size
+ * is not guessed from the token count.
  */
-export function SubAgentContextRow({ ctx }: { ctx: SubAgentContext }) {
-  const limit = getContextLimit(ctx.model ?? null, ctx.peakContextTokens)
-  const pct = Math.min((ctx.currentContextTokens / limit) * 100, 100)
-  const barColor = pct >= 80 ? 'bg-red-500' : pct >= 60 ? 'bg-amber-500' : 'bg-sky-500'
+export function SubAgentContextRow({
+  ctx,
+  windowSize,
+}: {
+  ctx: SubAgentContext
+  windowSize?: number | null
+}) {
+  const limit = windowSize != null && windowSize > 0 ? windowSize : null
+  const pct = limit ? Math.min((ctx.currentContextTokens / limit) * 100, 100) : null
+  const barColor =
+    pct == null ? '' : pct >= 80 ? 'bg-red-500' : pct >= 60 ? 'bg-amber-500' : 'bg-sky-500'
   const dot = <span className="text-gray-300 dark:text-gray-600">&middot;</span>
   return (
     <div
@@ -39,12 +50,19 @@ export function SubAgentContextRow({ ctx }: { ctx: SubAgentContext }) {
       </span>
       {dot}
       <span>peak {formatTokensCompact(ctx.peakContextTokens)}</span>
-      <span className="text-gray-300 dark:text-gray-600">/</span>
-      <span>{formatTokensCompact(limit)}</span>
-      <div className="ml-1 w-16 h-1 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden flex-shrink-0">
-        <div className={cn(barColor, 'h-full rounded-full')} style={{ width: `${pct}%` }} />
-      </div>
-      <span className="tabular-nums">{Math.round(pct)}%</span>
+      {limit != null && pct != null && (
+        <>
+          <span className="text-gray-300 dark:text-gray-600">/</span>
+          <span>{formatTokensCompact(limit)}</span>
+          <div className="ml-1 w-16 h-1 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden flex-shrink-0">
+            <div className={cn(barColor, 'h-full rounded-full')} style={{ width: `${pct}%` }} />
+          </div>
+          <span className="tabular-nums">{Math.round(pct)}%</span>
+        </>
+      )}
+      <span>
+        &middot; {ctx.requestCount} req{ctx.requestCount !== 1 ? 's' : ''}
+      </span>
     </div>
   )
 }

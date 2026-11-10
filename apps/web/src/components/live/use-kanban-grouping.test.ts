@@ -54,6 +54,7 @@ function makeSession(overrides: Partial<LiveSession> & { id: string }): LiveSess
     progressItems: [],
     toolsUsed: [],
     lastCacheHitAt: null,
+    cacheTtlSeconds: null,
     compactCount: 0,
     slug: null,
     closedAt: null,

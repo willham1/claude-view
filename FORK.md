@@ -37,6 +37,15 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
    upstream showed $0.00. Each helper is now priced from its own transcript. Fable 5.2 and Haiku 5.5 added to
    `data/anthropic-pricing.json`. Not modelled: Haiku 5.5's higher rate for prompts over 100k.
 5. Helper cost is not double-counted in team sessions.
+6. **Security advisories (2026-11-11):** tokio 1.52.3 -> 1.54.1 (RUSTSEC-2026-0386). SQLite (RUSTSEC-2026-0459,
+   CVE-2026-119375, fixed in SQLite 3.54.0): upstream bundles a vulnerable SQLite inside libsqlite3-sys 0.30.1, and
+   sqlx (0.8 and the newest 0.9) can't use the fixed libsqlite3-sys 0.39 yet. macOS's own SQLite lacks functions
+   sqlx needs, so the fork builds without `bundled` and links **Homebrew's SQLite** (`.cargo/config.toml`).
+   - Needs `brew install sqlite`; keep it current with `brew upgrade sqlite` (no rebuild needed for SQLite fixes).
+   - `crates/db/tests/sqlite_version.rs` fails if the linked SQLite is older than 3.54.0; `deny.toml` ignores the
+     advisory on that basis.
+   - Undo all of this (restore `bundled` on rusqlite and `sqlite` on sqlx, drop the config and ignore) once sqlx
+     accepts libsqlite3-sys >= 0.39 — check when merging upstream.
 
 ## Running it
 

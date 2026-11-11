@@ -16,6 +16,10 @@ ignore = [
     { id = "RUSTSEC-2024-0384", reason = "instant is a transitive dep of indicatif; no replacement available yet" },
     { id = "RUSTSEC-2025-0119", reason = "number_prefix is a transitive dep of indicatif; no replacement available yet" },
     { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; transitive dep of utoipa-axum, no alternative yet" },
+    # FORK: the vulnerable SQLite is the copy *bundled* in libsqlite3-sys < 0.39. This fork builds without
+    # `bundled` and links Homebrew's SQLite (>= 3.54.0, which has the fix); crates/db/tests/sqlite_version.rs
+    # fails if the linked SQLite is older. Remove once sqlx accepts libsqlite3-sys >= 0.39.
+    { id = "RUSTSEC-2026-0459", reason = "fork links Homebrew SQLite >= 3.54.0, not the bundled copy; enforced by crates/db/tests/sqlite_version.rs" },
 ]
 
 # License allow list — covers all current dependencies

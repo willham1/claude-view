@@ -1,2 +1,9 @@
 [env]
 TS_RS_EXPORT_DIR = { value = "apps/web/src/types/generated", relative = true }
+# FORK: link SQLite from Homebrew instead of the copy bundled in libsqlite3-sys 0.30.1, which carries
+# CVE-2026-119375 (RUSTSEC-2026-0459). sqlx 0.8/0.9 can't move to the fixed libsqlite3-sys 0.39 yet, and macOS's
+# own libsqlite3 lacks sqlite3_unlock_notify / sqlite3_load_extension that sqlx needs. Homebrew's is full-featured
+# and updated with `brew upgrade sqlite`. The test crates/db/tests/sqlite_version.rs fails if the linked SQLite is
+# older than 3.54.0. Revert (and restore `bundled`) once sqlx accepts libsqlite3-sys >= 0.39. See FORK.md.
+SQLITE3_LIB_DIR = "/opt/homebrew/opt/sqlite/lib"
+SQLITE3_INCLUDE_DIR = "/opt/homebrew/opt/sqlite/include"

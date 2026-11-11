@@ -42,6 +42,15 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
    upstream showed $0.00. Each helper is now priced from its own transcript. Fable 5.2 and Haiku 5.5 added to
    `data/anthropic-pricing.json`. Not modelled: Haiku 5.5's higher rate for prompts over 100k.
 5. Helper cost is not double-counted in team sessions.
+6. **Security advisories (2026-11-11):** tokio 1.52.3 -> 1.54.1 (RUSTSEC-2026-0386). SQLite (RUSTSEC-2026-0459,
+   CVE-2026-119375, fixed in SQLite 3.54.0): upstream bundles a vulnerable SQLite inside libsqlite3-sys 0.30.1, and
+   sqlx (0.8 and the newest 0.9) can't use the fixed libsqlite3-sys 0.39 yet. macOS's own SQLite lacks functions
+   sqlx needs, so the fork builds without `bundled` and links **Homebrew's SQLite** (`.cargo/config.toml`).
+   - Needs `brew install sqlite`; keep it current with `brew upgrade sqlite` (no rebuild needed for SQLite fixes).
+   - `crates/db/tests/sqlite_version.rs` fails if the linked SQLite is older than 3.54.0; `deny.toml` ignores the
+     advisory on that basis.
+   - Undo all of this (restore `bundled` on rusqlite and `sqlite` on sqlx, drop the config and ignore) once sqlx
+     accepts libsqlite3-sys >= 0.39 — check when merging upstream.
 
 ## Running it
 
@@ -51,6 +60,12 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
 - Source builds have no analytics key, and login/sharing/mobile relay are off (no SUPABASE/RELAY/SHARE URLs).
 - **Build** (PATH needs Rust from Homebrew `rustup`, `$(brew --prefix rustup)/bin`, and Bun from `~/tools/bun-npm`):
   `bun install && bun run build:sidecar && (cd apps/web && bun run build) && cargo build --release -p claude-view-server`
+  Run it **from inside the repo** (that's where `.cargo/config.toml` points the build at Homebrew's SQLite), then
+  confirm with `otool -L target/release/claude-view | grep sqlite`: it must show `/opt/homebrew/opt/sqlite/lib/...`.
+  If it shows `/usr/lib/libsqlite3.dylib` or nothing, the build missed the config (or `SQLITE3_LIB_DIR` was set in
+  the shell): rebuild from the repo root.
+- **Don't use upstream's Release workflow** (`.github/workflows/release.yml`, runs on `v*` tags or by hand): its
+  runners have no Homebrew SQLite, and its binaries are for distribution, which this fork doesn't do.
 
 ## Checks
 

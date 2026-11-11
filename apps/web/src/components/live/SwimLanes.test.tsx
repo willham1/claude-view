@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { type SubAgentContext, findSubAgentContext } from '../../hooks/use-subagent-context'
 import type { SubAgentInfo } from '../../types/generated/SubAgentInfo'
-import { SubAgentContextRow, SwimLanes, subAgentWindowSize } from './SwimLanes'
+import { SubAgentContextRow, SwimLanes, subAgentModelLabel, subAgentWindowSize } from './SwimLanes'
 
 // Helper to create minimal SubAgentInfo fixture
 function makeSubAgent(overrides?: Partial<SubAgentInfo>): SubAgentInfo {
@@ -322,6 +322,36 @@ describe('SwimLanes', () => {
       expect(text).toContain('1.0M')
       expect(text).toContain('17%')
       expect(text).not.toContain('85%')
+    })
+
+    it('shows the model and effort level at the start of the context line', () => {
+      const agent = makeSubAgent({ agentId: 'abc1' })
+      render(
+        <SwimLanes
+          subAgents={[agent]}
+          contexts={[ctx({ model: 'claude-fable-5-2', effort: 'high' })]}
+        />,
+      )
+      expect(screen.getByTestId('subagent-model').textContent).toBe('Fable 5.2')
+      expect(screen.getByTestId('subagent-effort').textContent).toBe('high effort')
+      const text = screen.getByTestId('subagent-context').textContent ?? ''
+      expect(text.indexOf('Fable 5.2')).toBeLessThan(text.indexOf('ctx'))
+    })
+
+    it('leaves out effort when the transcript does not record it', () => {
+      const agent = makeSubAgent({ agentId: 'abc1' })
+      render(<SwimLanes subAgents={[agent]} contexts={[ctx({ model: 'claude-opus-5-5' })]} />)
+      expect(screen.getByTestId('subagent-model').textContent).toBe('Opus 5.5')
+      expect(screen.queryByTestId('subagent-effort')).toBeNull()
+    })
+
+    it('subAgentModelLabel shortens ids and drops the [1m] marker', () => {
+      expect(subAgentModelLabel('claude-opus-5-5')).toBe('Opus 5.5')
+      expect(subAgentModelLabel('claude-sonnet-4-5-20250929')).toBe('Sonnet 4.5')
+      expect(subAgentModelLabel('claude-opus-4-8[1m]')).toBe('Opus 4.8')
+      expect(subAgentModelLabel('gpt-made-up')).toBe('gpt-made-up')
+      expect(subAgentModelLabel(undefined)).toBeNull()
+      expect(subAgentModelLabel('')).toBeNull()
     })
 
     it('shows tokens without % when no model (so no window) is known', () => {

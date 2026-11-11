@@ -32,8 +32,8 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
    (`cache_creation.ephemeral_1h_input_tokens`), 5 minutes when 5m or unknown. Upstream hard-coded 5 minutes.
    Applies to warm/cold status, card countdown/tooltip and the resume cost estimate
    (`crates/core/src/cache_ttl.rs`, `cacheTtlSeconds` on live sessions, `apps/web/src/lib/cache-ttl.ts`).
-2. **Sub-agent context window:** the Sub-Agents tab shows per sub-agent a "ctx" line (start / now / peak and request
-   count), read from `subagents/agent-*.jsonl` via `GET /api/sessions/{id}/subagents/context`, polled every 5 s on
+2. **Sub-agent context window:** the Sub-Agents tab shows per sub-agent a "ctx" line (model and effort level of the
+   latest request, then start / now / peak and request count), read from `subagents/agent-*.jsonl` via `GET /api/sessions/{id}/subagents/context`, polled every 5 s on
    live sessions, cached per file (size + mtime).
 3. **Context window from the model** (`apps/web/src/lib/model-context-windows.ts`): models that are 1M natively in
    Claude Code's model table (Opus 5.5/5/4.8/4.7, Sonnet 5.5/5, Haiku 5.5, Fable 5.2/5.1/5, Mythos 5.x) get 1M from

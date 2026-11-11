@@ -9,9 +9,14 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
 - **This repo (fork):** https://github.com/willham1/claude-view, working copy `~/Documents/claudeview`.
   Remotes: `origin` = the fork, `upstream` = tombelieber/claude-view.
 - **Fork base:** upstream `main` at e78ca6b (2026-11-03, v0.46.3).
-- **Running copy (as of 2026-11-11):** the app you start from Spotlight is still the build in `~/tools/claude-view`
-  (branch `local/owner-fixes`, same code as this fork's fixes). Notes for it: `~/tools/claude-view-NOTES.md`.
-  Moving the build here means changing `cd` and `STATIC_DIR` in the launcher (see `fork/launcher/`) and rebuilding.
+- **Running copy:** this folder. Spotlight "claude-view" / "Stop claude-view" (apps in `~/Applications`) run
+  `fork/launcher/claude-view-open.sh` / `claude-view-stop.sh`; recreate them with `fork/launcher/make-spotlight-apps.sh`
+  if the repo moves. The app runs whatever is built here (`target/release/claude-view`, `apps/web/dist`), so after
+  merging changes, rebuild (see below) and restart it (Stop, then start).
+- **Kept in `~/tools`:** `bun-npm` (Bun, needed to build and at run time) and the settings backup
+  `claude-settings-backup-2026-11-10.json`. The original quick install there (`~/tools/claude-view`, its notes and
+  scripts) was retired on 2026-11-11; its code is this fork's PR #1.
+- **App data:** `~/.claude-view` (its local index and logs). Not part of the repo.
 
 ## Branches and workflow
 
@@ -40,7 +45,7 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
 
 ## Running it
 
-- Launcher scripts are in `fork/launcher/` (copies of the ones in `~/tools`). They run read-only:
+- Launcher scripts are in `fork/launcher/` and find the repo from their own location. They run read-only:
   `CLAUDE_VIEW_SKIP_HOOKS=1` so it never edits `~/.claude/settings.json`, and `CLAUDE_VIEW_TELEMETRY=0`.
   Don't turn hook mode on without the owner's say-so.
 - Source builds have no analytics key, and login/sharing/mobile relay are off (no SUPABASE/RELAY/SHARE URLs).

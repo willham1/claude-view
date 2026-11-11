@@ -55,6 +55,12 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
 - Source builds have no analytics key, and login/sharing/mobile relay are off (no SUPABASE/RELAY/SHARE URLs).
 - **Build** (PATH needs Rust from Homebrew `rustup`, `$(brew --prefix rustup)/bin`, and Bun from `~/tools/bun-npm`):
   `bun install && bun run build:sidecar && (cd apps/web && bun run build) && cargo build --release -p claude-view-server`
+  Run it **from inside the repo** (that's where `.cargo/config.toml` points the build at Homebrew's SQLite), then
+  confirm with `otool -L target/release/claude-view | grep sqlite`: it must show `/opt/homebrew/opt/sqlite/lib/...`.
+  If it shows `/usr/lib/libsqlite3.dylib` or nothing, the build missed the config (or `SQLITE3_LIB_DIR` was set in
+  the shell): rebuild from the repo root.
+- **Don't use upstream's Release workflow** (`.github/workflows/release.yml`, runs on `v*` tags or by hand): its
+  runners have no Homebrew SQLite, and its binaries are for distribution, which this fork doesn't do.
 
 ## Checks
 

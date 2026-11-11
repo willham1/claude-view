@@ -215,7 +215,7 @@ describe('TimelineView', () => {
       />,
     )
     // Complete Explore agents render with type-based blue color
-    const bars = container.querySelectorAll('[class*="bg-blue"]')
+    const bars = container.querySelectorAll('[class*="bg-sky"]')
     expect(bars.length).toBeGreaterThan(0)
   })
 
@@ -236,7 +236,7 @@ describe('TimelineView', () => {
     )
     // Should render with min-width CSS (max(2px, ...))
     // We can't easily test the computed width, but verify it renders
-    const bars = container.querySelectorAll('[class*="bg-blue"]')
+    const bars = container.querySelectorAll('[class*="bg-sky"]')
     expect(bars.length).toBeGreaterThan(0)
   })
 
@@ -285,7 +285,7 @@ describe('TimelineView', () => {
       />,
     )
     // Should clamp to 0% start position
-    const bars = container.querySelectorAll('[class*="bg-blue"]')
+    const bars = container.querySelectorAll('[class*="bg-sky"]')
     expect(bars.length).toBeGreaterThan(0)
   })
 
@@ -305,7 +305,7 @@ describe('TimelineView', () => {
       />,
     )
     // Should clamp width to not exceed 100%
-    const bars = container.querySelectorAll('[class*="bg-blue"]')
+    const bars = container.querySelectorAll('[class*="bg-sky"]')
     expect(bars.length).toBeGreaterThan(0)
   })
 
@@ -431,5 +431,31 @@ describe('TimelineView', () => {
     const ariaLabel = barWrapper?.getAttribute('aria-label')
     expect(ariaLabel).toContain('Explore')
     expect(ariaLabel).toContain('Test exploration task')
+  })
+})
+
+describe('TimelineView legend', () => {
+  it('explains the chart and shows the colour key', () => {
+    const agents: SubAgentInfo[] = [
+      {
+        toolUseId: 't1',
+        agentType: 'builder',
+        description: 'Build',
+        status: 'running',
+        startedAt: 1000,
+        completedAt: null,
+        costUsd: null,
+        durationMs: null,
+        toolUseCount: null,
+        agentId: null,
+      },
+    ]
+    render(<TimelineView subAgents={agents} sessionStartedAt={1000} sessionDurationMs={60_000} />)
+    const text = screen.getByTestId('timeline-legend').textContent ?? ''
+    expect(text).toContain('When each helper ran')
+    expect(text).toContain('right edge = now')
+    expect(text).toContain('running')
+    expect(text).toContain('finished')
+    expect(text).toContain('failed')
   })
 })

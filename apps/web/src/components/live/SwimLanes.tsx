@@ -1,10 +1,18 @@
 import { useMemo } from 'react'
+import { useNowSeconds } from '../../hooks/use-now-seconds'
 import {
   LIST_PRICE_TITLE,
   type SubAgentContext,
   findSubAgentContext,
   subAgentCostUsd,
 } from '../../hooks/use-subagent-context'
+import {
+  cacheRemainingSeconds,
+  cacheRemainingTextColor,
+  effectiveCacheTtl,
+  formatCacheRemaining,
+  formatCacheTtl,
+} from '../../lib/cache-ttl'
 import { formatModelName } from '../../lib/format-model'
 import { formatCostUsd } from '../../lib/format-utils'
 import { getContextLimit } from '../../lib/model-context-windows'
@@ -43,6 +51,32 @@ export function subAgentModelLabel(model: string | undefined): string | null {
   const bare = model.replace(/\[1m\]$/i, '')
   if (!bare) return null
   return formatModelName(bare).replace(/^Claude /, '')
+}
+
+/**
+ * Live prompt-cache countdown for one sub-agent: its cache stays warm for
+ * its cache lifetime (1h or 5m) after its latest request.
+ */
+export function SubAgentCacheTimer({ ctx }: { ctx: SubAgentContext }) {
+  const last = ctx.lastActivityAt
+  const ttl = effectiveCacheTtl(ctx.cacheTtlSeconds)
+  const now = useNowSeconds(last != null)
+  if (last == null || last <= 0) return null
+  const remaining = cacheRemainingSeconds(last, ttl, now)
+  const ttlLabel = formatCacheTtl(ttl)
+  return (
+    <span
+      className={cacheRemainingTextColor(remaining, ttl)}
+      data-testid="subagent-cache"
+      title={
+        remaining > 0
+          ? `This helper's prompt cache (${ttlLabel} lifetime) stays warm until ${formatCacheRemaining(remaining)} from now. Messaging it before then reuses the cache (cheaper, faster).`
+          : `This helper's prompt cache (${ttlLabel} lifetime) has expired. Messaging it again re-sends its whole context at the higher cache-write price.`
+      }
+    >
+      cache {remaining > 0 ? `${formatCacheRemaining(remaining)} left` : 'expired'} ({ttlLabel})
+    </span>
+  )
 }
 
 /**
@@ -107,6 +141,12 @@ export function SubAgentContextRow({
       <span>
         &middot; {ctx.requestCount} req{ctx.requestCount !== 1 ? 's' : ''}
       </span>
+      {ctx.lastActivityAt != null && ctx.lastActivityAt > 0 && (
+        <>
+          {dot}
+          <SubAgentCacheTimer ctx={ctx} />
+        </>
+      )}
     </div>
   )
 }
@@ -185,10 +225,9 @@ export function SwimLanes({ subAgents, onDrillDown, contexts }: SwimLanesProps) 
 
   return (
     <div
-      className={cn(
-        'flex flex-col gap-1 bg-white dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg p-2',
-        subAgents.length > 5 && 'max-h-[360px] overflow-y-auto',
-      )}
+      // No height cap: the Sub-Agents tab scrolls this area, and a cap left an
+      // empty gap above the timeline on tall panels.
+      className="flex flex-col gap-1 bg-white dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg p-2"
     >
       {pricedCount > 0 && (
         <div
@@ -281,7 +320,7 @@ export function SwimLanes({ subAgents, onDrillDown, contexts }: SwimLanesProps) 
                 )}
               </div>
             ) : agent.status === 'error' && agent.errorReason ? (
-              <div className="pl-4 flex items-center gap-1.5">
+              <div className="pl-4 flex items-center gap-1.5 min-w-0">
                 {cost != null && (
                   <>
                     <span
@@ -294,7 +333,10 @@ export function SwimLanes({ subAgents, onDrillDown, contexts }: SwimLanesProps) 
                     <span className="text-gray-300 dark:text-gray-600">&middot;</span>
                   </>
                 )}
-                <span className="text-xs text-red-500/80 dark:text-red-400/70">
+                <span
+                  className="text-xs text-red-500/80 dark:text-red-400/70 line-clamp-2"
+                  title={agent.errorReason}
+                >
                   {agent.errorReason}
                 </span>
               </div>

@@ -1,7 +1,8 @@
 # Background shell (GSD)
 .bg-shell/
 # Dependencies
-node_modules/
+# No trailing slash: also ignores node_modules symlinks (a worktree link was committed by accident once)
+node_modules
 
 # Build outputs
 dist/

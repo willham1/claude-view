@@ -63,6 +63,7 @@ function createMockSession(overrides: Partial<LiveSession> = {}): LiveSession {
     progressItems: [],
     toolsUsed: [],
     lastCacheHitAt: null,
+    cacheTtlSeconds: null,
     compactCount: 0,
     slug: null,
     closedAt: null,

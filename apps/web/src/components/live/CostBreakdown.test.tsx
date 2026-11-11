@@ -93,4 +93,30 @@ describe('CostBreakdown', () => {
     expect(screen.getAllByText('Unavailable').length).toBeGreaterThan(0)
     expect(screen.getByText(/Partial pricing:/)).toBeInTheDocument()
   })
+  it('counts helper cost once when team sidechains cover the same agents', () => {
+    const cost: LiveSession['cost'] = {
+      totalUsd: 1.0,
+      inputCostUsd: 1.0,
+      outputCostUsd: 0,
+      cacheReadCostUsd: 0,
+      cacheCreationCostUsd: 0,
+      cacheSavingsUsd: 0,
+      hasUnpricedUsage: false,
+      unpricedInputTokens: 0,
+      unpricedOutputTokens: 0,
+      unpricedCacheReadTokens: 0,
+      unpricedCacheCreationTokens: 0,
+      pricedTokenCoverage: 1,
+      totalCostSource: 'computed_priced_tokens_full',
+    }
+    const subAgents = [
+      { agentId: 'aaa111', toolUseId: 't1', agentType: 'builder', description: 'made-up helper', status: 'complete', costUsd: 2.0 },
+    ] as unknown as NonNullable<Parameters<typeof CostBreakdown>[0]['subAgents']>
+    const sidechains = [
+      { agentId: 'aaa111', memberName: 'made-up member', model: 'claude-opus-5-5', costUsd: 2.0, lineCount: 1 },
+    ] as unknown as NonNullable<Parameters<typeof CostBreakdown>[0]['sidechains']>
+    render(<CostBreakdown cost={cost} subAgents={subAgents} sidechains={sidechains} />)
+    expect(screen.getAllByText('$3.00').length).toBeGreaterThan(0)
+    expect(screen.queryByText('$5.00')).toBeNull()
+  })
 })

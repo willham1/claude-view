@@ -16,7 +16,10 @@ interface CostBreakdownProps {
 export function CostBreakdown({ cost, tokens, subAgents, sidechains }: CostBreakdownProps) {
   const subAgentTotal = subAgents?.reduce((sum, a) => sum + (a.costUsd ?? 0), 0) ?? 0
   const sidechainTotal = sidechains?.reduce((sum, sc) => sum + (sc.costUsd ?? 0), 0) ?? 0
-  const grandTotal = cost.totalUsd + subAgentTotal + sidechainTotal
+  // Team sidechains and sub-agents are priced from the same transcript files:
+  // count one or the other, never both.
+  const grandTotal =
+    cost.totalUsd + (sidechains && sidechains.length > 0 ? sidechainTotal : subAgentTotal)
   const cacheCreation5mTokens = tokens?.cacheCreation5mTokens ?? 0
   const cacheCreation1hrTokens = tokens?.cacheCreation1hrTokens ?? 0
   const hasCacheCreationSplit = cacheCreation5mTokens > 0 || cacheCreation1hrTokens > 0

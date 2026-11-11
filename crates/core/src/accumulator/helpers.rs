@@ -16,7 +16,7 @@ impl SessionAccumulator {
     /// Note: `pricing` is kept in the signature for backward compatibility but is
     /// no longer used -- cost is accumulated per-turn in `process_line()`.
     pub fn finish(&self, _pricing: &HashMap<String, ModelPricing>) -> RichSessionData {
-        let cache_status = derive_cache_status(self.last_cache_hit_at);
+        let cache_status = derive_cache_status(self.last_cache_hit_at, self.cache_ttl_seconds);
 
         let mut progress_items = self.todo_items.clone();
         progress_items.extend(self.task_items.clone());
@@ -45,6 +45,7 @@ impl SessionAccumulator {
                 Some(self.last_user_message.clone())
             },
             last_cache_hit_at: self.last_cache_hit_at,
+            cache_ttl_seconds: self.cache_ttl_seconds,
             slug: self.slug.clone(),
             phase: PhaseHistory {
                 current: self.phase_labels.last().cloned(),
@@ -91,15 +92,19 @@ impl SessionAccumulator {
 
 /// Derive cache status from the last cache hit timestamp.
 ///
-/// Warm if the last cache activity was within 5 minutes, Cold otherwise.
-pub(crate) fn derive_cache_status(last_cache_hit_at: Option<i64>) -> CacheStatus {
+/// Warm if the last cache activity was within the cache TTL of the latest
+/// cache write (1 hour or 5 minutes; 5 minutes when unknown), Cold otherwise.
+pub(crate) fn derive_cache_status(
+    last_cache_hit_at: Option<i64>,
+    cache_ttl_seconds: Option<u32>,
+) -> CacheStatus {
     match last_cache_hit_at {
         Some(ts) => {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs() as i64;
-            if (now - ts) < 300 {
+            if crate::cache_ttl::is_cache_warm(ts, now, cache_ttl_seconds) {
                 CacheStatus::Warm
             } else {
                 CacheStatus::Cold

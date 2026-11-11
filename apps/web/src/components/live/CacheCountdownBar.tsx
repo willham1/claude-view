@@ -1,24 +1,32 @@
 import { useEffect, useState } from 'react'
+import { cacheRemainingSeconds, effectiveCacheTtl, formatCacheTtl } from '../../lib/cache-ttl'
 import { cn } from '../../lib/utils'
-
-const CACHE_TTL_SECONDS = 300
 
 interface CacheCountdownBarProps {
   lastCacheHitAt: number | null
   cacheStatus: 'warm' | 'cold' | 'unknown'
+  /** TTL of the session's latest cache write (3600 or 300); null = 5 minutes. */
+  cacheTtlSeconds?: number | null
 }
 
 /**
- * Inline horizontal progress bar showing Anthropic's prompt cache TTL (300s)
- * depleting in real-time. Designed for the side panel overview tab.
+ * Inline horizontal progress bar showing Anthropic's prompt cache TTL
+ * depleting in real-time. The TTL is the one the session's latest cache
+ * write used: 1 hour or 5 minutes (5 minutes when unknown).
+ * Designed for the side panel overview tab.
  *
  * Shows: progress bar, time remaining, percentage, and next-turn hint.
  * Returns null if no cache activity has occurred.
  */
-export function CacheCountdownBar({ lastCacheHitAt, cacheStatus }: CacheCountdownBarProps) {
+export function CacheCountdownBar({
+  lastCacheHitAt,
+  cacheStatus,
+  cacheTtlSeconds,
+}: CacheCountdownBarProps) {
   const hasCacheHit = lastCacheHitAt != null && lastCacheHitAt > 0
+  const ttl = effectiveCacheTtl(cacheTtlSeconds)
   const [remaining, setRemaining] = useState(() =>
-    hasCacheHit ? computeRemaining(lastCacheHitAt) : 0,
+    hasCacheHit ? cacheRemainingSeconds(lastCacheHitAt, ttl) : 0,
   )
 
   useEffect(() => {
@@ -27,20 +35,20 @@ export function CacheCountdownBar({ lastCacheHitAt, cacheStatus }: CacheCountdow
       return
     }
 
-    setRemaining(computeRemaining(lastCacheHitAt))
+    setRemaining(cacheRemainingSeconds(lastCacheHitAt, ttl))
 
     const interval = setInterval(() => {
-      setRemaining(computeRemaining(lastCacheHitAt))
+      setRemaining(cacheRemainingSeconds(lastCacheHitAt, ttl))
     }, 1000)
 
     return () => clearInterval(interval)
-  }, [lastCacheHitAt, hasCacheHit])
+  }, [lastCacheHitAt, hasCacheHit, ttl])
 
   if (!hasCacheHit && cacheStatus === 'unknown') {
     return null
   }
 
-  const progress = remaining / CACHE_TTL_SECONDS
+  const progress = remaining / ttl
   const isExpired = remaining <= 0
   const minutes = Math.floor(remaining / 60)
   const seconds = remaining % 60
@@ -55,9 +63,10 @@ export function CacheCountdownBar({ lastCacheHitAt, cacheStatus }: CacheCountdow
         ? 'bg-amber-500'
         : 'bg-green-500'
 
+  const ttlLabel = formatCacheTtl(ttl)
   const statusText = isExpired
-    ? 'Cache expired — next turn will re-cache (slower, costs more)'
-    : 'Cache warm — next turn uses cached tokens (faster, cheaper)'
+    ? `Cache expired (${ttlLabel} TTL) — next turn will re-cache (slower, costs more)`
+    : `Cache warm (${ttlLabel} TTL) — next turn uses cached tokens (faster, cheaper)`
 
   return (
     <div className="space-y-2">
@@ -97,10 +106,4 @@ export function CacheCountdownBar({ lastCacheHitAt, cacheStatus }: CacheCountdow
       </p>
     </div>
   )
-}
-
-function computeRemaining(lastCacheHitAt: number | null): number {
-  if (lastCacheHitAt == null || lastCacheHitAt <= 0) return 0
-  const elapsed = Math.floor(Date.now() / 1000) - lastCacheHitAt
-  return Math.max(0, CACHE_TTL_SECONDS - elapsed)
 }

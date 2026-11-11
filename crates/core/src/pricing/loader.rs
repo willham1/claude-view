@@ -101,8 +101,8 @@ mod tests {
     #[test]
     fn test_load_pricing_parses_all_models() {
         let pricing = load_pricing();
-        // 25 models + 3 aliases = 28 entries
-        assert_eq!(pricing.len(), 28);
+        // 27 models + 3 aliases = 30 entries (local: + Fable 5.2, Haiku 5.5)
+        assert_eq!(pricing.len(), 30);
     }
 
     /// Models known to appear in real JSONL sessions right now.
@@ -112,6 +112,8 @@ mod tests {
     /// list is the CI gate: if a dev forgets the pricing update, the test below
     /// fails with a pointer to the fix.
     const ACTIVE_MODELS: &[&str] = &[
+        "claude-fable-5-2",
+        "claude-haiku-5-5",
         "claude-fable-5-1",
         "claude-fable-5",
         "claude-mythos-5",
@@ -167,6 +169,37 @@ mod tests {
             opus48.cache_creation_cost_per_token_1hr,
             opus47.cache_creation_cost_per_token_1hr
         );
+    }
+
+    #[test]
+    fn test_fable_5_2_priced_at_owner_list_rates() {
+        // Owner's ADR 0004: $8 in / $40 out / $16 1h-write / $0.20 read;
+        // 5m write = 1.25x input = $10 (derived).
+        let pricing = load_pricing();
+        let f = pricing
+            .get("claude-fable-5-2")
+            .expect("Fable 5.2 must be in the pricing table");
+        assert!((f.input_cost_per_token - 8e-6).abs() < 1e-15);
+        assert!((f.output_cost_per_token - 40e-6).abs() < 1e-15);
+        assert!((f.cache_creation_cost_per_token - 10e-6).abs() < 1e-15);
+        assert!((f.cache_read_cost_per_token - 0.2e-6).abs() < 1e-15);
+        assert!((f.cache_creation_cost_per_token_1hr.unwrap() - 16e-6).abs() < 1e-15);
+    }
+
+    #[test]
+    fn test_haiku_5_5_priced_at_owner_list_rates() {
+        // Owner's ADR 0004: $0.10 in / $0.50 out / $0.20 1h-write / $0.01 read;
+        // 5m write = 1.25x input = $0.125 (derived). Without this entry the
+        // family fallback charged Haiku 4.5's $1/$5 (10x too much).
+        let pricing = load_pricing();
+        let h = pricing
+            .get("claude-haiku-5-5")
+            .expect("Haiku 5.5 must be in the pricing table");
+        assert!((h.input_cost_per_token - 0.1e-6).abs() < 1e-15);
+        assert!((h.output_cost_per_token - 0.5e-6).abs() < 1e-15);
+        assert!((h.cache_creation_cost_per_token - 0.125e-6).abs() < 1e-15);
+        assert!((h.cache_read_cost_per_token - 0.01e-6).abs() < 1e-15);
+        assert!((h.cache_creation_cost_per_token_1hr.unwrap() - 0.2e-6).abs() < 1e-15);
     }
 
     #[test]

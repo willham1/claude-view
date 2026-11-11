@@ -4059,6 +4059,39 @@
         }
       }
     },
+    "/api/sessions/{id}/subagents/context": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "GET /api/sessions/:id/subagents/context",
+        "operationId": "get_subagent_context",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Parent session ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Context-window usage per sub-agent",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found"
+          }
+        }
+      }
+    },
     "/api/sessions/{id}/subagents/{agent_id}/messages": {
       "get": {
         "tags": [

@@ -513,6 +513,7 @@ export function SessionCard({
           agentStateKey={session.agentState.state}
           spinnerVerb={pickVerb(session.id)}
           lastCacheHitAt={session.lastCacheHitAt}
+          cacheTtlSeconds={session.cacheTtlSeconds ?? null}
           lastTurnTaskSeconds={session.lastTurnTaskSeconds}
         />
       </div>

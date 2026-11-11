@@ -1,7 +1,15 @@
 import { useMemo } from 'react'
+import {
+  LIST_PRICE_TITLE,
+  type SubAgentContext,
+  findSubAgentContext,
+  subAgentCostUsd,
+} from '../../hooks/use-subagent-context'
 import { formatCostUsd } from '../../lib/format-utils'
+import { getContextLimit } from '../../lib/model-context-windows'
 import { cn } from '../../lib/utils'
 import type { SubAgentInfo } from '../../types/generated/SubAgentInfo'
+import { formatTokensCompact } from '../spinner/constants'
 
 interface SwimLanesProps {
   subAgents: SubAgentInfo[]
@@ -9,6 +17,70 @@ interface SwimLanesProps {
   sessionActive?: boolean
   /** Called when a sub-agent row is clicked to drill down into its conversation */
   onDrillDown?: (agentId: string, agentType: string, description: string) => void
+  /** Per-sub-agent context-window usage read from the sub-agent transcripts. */
+  contexts?: SubAgentContext[]
+}
+
+/**
+ * Window size for a sub-agent, from the same lookup the main session's
+ * Context Window panel uses (`getContextLimit`: the model's window from
+ * Claude Code's model table, a `[1m]` marker, else 200k with the fill-based
+ * 1M guess). Returns null only when no model is known.
+ */
+export function subAgentWindowSize(ctx: SubAgentContext): number | null {
+  const model = ctx.model ?? null
+  if (model == null || model === '') return null
+  return getContextLimit(model, ctx.peakContextTokens)
+}
+
+/**
+ * Context-window line for one sub-agent: size at its first request, now, and
+ * at its largest request.
+ *
+ * A fill bar and percentage are shown when the window size is known
+ * (`windowSize`, see `subAgentWindowSize`); otherwise tokens only.
+ */
+export function SubAgentContextRow({
+  ctx,
+  windowSize,
+}: {
+  ctx: SubAgentContext
+  windowSize?: number | null
+}) {
+  const limit = windowSize != null && windowSize > 0 ? windowSize : null
+  const pct = limit ? Math.min((ctx.currentContextTokens / limit) * 100, 100) : null
+  const barColor =
+    pct == null ? '' : pct >= 80 ? 'bg-red-500' : pct >= 60 ? 'bg-amber-500' : 'bg-sky-500'
+  const dot = <span className="text-gray-300 dark:text-gray-600">&middot;</span>
+  return (
+    <div
+      className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 pl-4 text-xs font-mono text-gray-400 dark:text-gray-500 [&>span]:whitespace-nowrap"
+      data-testid="subagent-context"
+      title={`${ctx.requestCount} request${ctx.requestCount !== 1 ? 's' : ''}; context = input + cache read + cache write tokens`}
+    >
+      <span className="text-gray-500 dark:text-gray-400">ctx</span>
+      <span>start {formatTokensCompact(ctx.startContextTokens)}</span>
+      {dot}
+      <span className="text-gray-700 dark:text-gray-300">
+        now {formatTokensCompact(ctx.currentContextTokens)}
+      </span>
+      {dot}
+      <span>peak {formatTokensCompact(ctx.peakContextTokens)}</span>
+      {limit != null && pct != null && (
+        <>
+          <span className="text-gray-300 dark:text-gray-600">/</span>
+          <span>{formatTokensCompact(limit)}</span>
+          <div className="ml-1 w-16 h-1 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden flex-shrink-0">
+            <div className={cn(barColor, 'h-full rounded-full')} style={{ width: `${pct}%` }} />
+          </div>
+          <span className="tabular-nums">{Math.round(pct)}%</span>
+        </>
+      )}
+      <span>
+        &middot; {ctx.requestCount} req{ctx.requestCount !== 1 ? 's' : ''}
+      </span>
+    </div>
+  )
 }
 
 function formatCost(usd: number): string {
@@ -58,11 +130,12 @@ function ProgressBar() {
  * - Description text
  * - For running: current activity or progress bar
  * - For finished: cost, duration, tool call count
+ * - When known: context window (start / now / peak) from the sub-agent transcript
  *
  * Clicking a row opens the terminal drill-down (when agentId is available).
  * Rows are sorted: running first (by startedAt), then completed (by completedAt desc).
  */
-export function SwimLanes({ subAgents, onDrillDown }: SwimLanesProps) {
+export function SwimLanes({ subAgents, onDrillDown, contexts }: SwimLanesProps) {
   // Sort: Running first (by startedAt asc), then Complete/Error (by completedAt desc)
   const sortedAgents = useMemo(() => {
     const running = subAgents
@@ -78,6 +151,10 @@ export function SwimLanes({ subAgents, onDrillDown }: SwimLanesProps) {
 
   if (subAgents.length === 0) return null
 
+  const costs = subAgents.map((a) => subAgentCostUsd(a, contexts))
+  const pricedCount = costs.filter((c) => c != null).length
+  const totalCost = costs.reduce<number>((s, c) => s + (c ?? 0), 0)
+
   return (
     <div
       className={cn(
@@ -85,8 +162,28 @@ export function SwimLanes({ subAgents, onDrillDown }: SwimLanesProps) {
         subAgents.length > 5 && 'max-h-[360px] overflow-y-auto',
       )}
     >
+      {pricedCount > 0 && (
+        <div
+          className="flex items-center gap-1.5 px-2.5 pb-1 text-xs font-mono text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800/60"
+          title={LIST_PRICE_TITLE}
+          data-testid="subagent-cost-total"
+        >
+          <span>
+            {subAgents.length} sub-agent{subAgents.length !== 1 ? 's' : ''}:
+          </span>
+          <span className="text-gray-700 dark:text-gray-300 tabular-nums">
+            {formatCost(totalCost)}
+          </span>
+          <span className="text-gray-400 dark:text-gray-500">
+            list price
+            {pricedCount < subAgents.length ? ` (${pricedCount} priced)` : ''}
+          </span>
+        </div>
+      )}
       {sortedAgents.map((agent) => {
         const canDrillDown = !!agent.agentId && !!onDrillDown
+        const ctx = findSubAgentContext(agent, contexts)
+        const cost = subAgentCostUsd(agent, contexts)
 
         return (
           <div
@@ -140,6 +237,15 @@ export function SwimLanes({ subAgents, onDrillDown }: SwimLanesProps) {
                 ) : (
                   <ProgressBar />
                 )}
+                {cost != null && (
+                  <span
+                    className="text-xs font-mono text-gray-400 dark:text-gray-500 flex-shrink-0"
+                    title={LIST_PRICE_TITLE}
+                    data-testid="subagent-cost"
+                  >
+                    {formatCost(cost)} so far
+                  </span>
+                )}
                 {!agent.agentId && onDrillDown && (
                   <span className="text-xs text-gray-400 dark:text-gray-500 italic">
                     awaiting agent ID...
@@ -147,15 +253,31 @@ export function SwimLanes({ subAgents, onDrillDown }: SwimLanesProps) {
                 )}
               </div>
             ) : agent.status === 'error' && agent.errorReason ? (
-              <div className="pl-4">
+              <div className="pl-4 flex items-center gap-1.5">
+                {cost != null && (
+                  <>
+                    <span
+                      className="text-xs font-mono text-gray-400 dark:text-gray-500"
+                      title={LIST_PRICE_TITLE}
+                      data-testid="subagent-cost"
+                    >
+                      {formatCost(cost)}
+                    </span>
+                    <span className="text-gray-300 dark:text-gray-600">&middot;</span>
+                  </>
+                )}
                 <span className="text-xs text-red-500/80 dark:text-red-400/70">
                   {agent.errorReason}
                 </span>
               </div>
             ) : (
               <div className="flex items-center gap-1.5 pl-4 text-xs font-mono text-gray-400 dark:text-gray-500">
-                {agent.costUsd != null && <span>{formatCost(agent.costUsd)}</span>}
-                {agent.costUsd != null && agent.durationMs != null && (
+                {cost != null && (
+                  <span title={LIST_PRICE_TITLE} data-testid="subagent-cost">
+                    {formatCost(cost)}
+                  </span>
+                )}
+                {cost != null && agent.durationMs != null && (
                   <span className="text-gray-300 dark:text-gray-600">&middot;</span>
                 )}
                 {agent.durationMs != null && <span>{formatDuration(agent.durationMs)}</span>}
@@ -164,10 +286,16 @@ export function SwimLanes({ subAgents, onDrillDown }: SwimLanesProps) {
                 )}
                 {agent.toolUseCount != null && (
                   <span>
-                    {agent.toolUseCount} tool call{agent.toolUseCount !== 1 ? 's' : ''}
+                    {agent.toolUseCount} tool call
+                    {agent.toolUseCount !== 1 ? 's' : ''}
                   </span>
                 )}
               </div>
+            )}
+
+            {/* Row 3: context window (from the sub-agent's own transcript) */}
+            {ctx && ctx.requestCount > 0 && (
+              <SubAgentContextRow ctx={ctx} windowSize={subAgentWindowSize(ctx)} />
             )}
           </div>
         )

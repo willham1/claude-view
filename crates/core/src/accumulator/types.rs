@@ -28,6 +28,9 @@ pub struct SessionAccumulator {
     pub todo_items: Vec<ProgressItem>,
     pub task_items: Vec<ProgressItem>,
     pub last_cache_hit_at: Option<i64>,
+    /// Prompt-cache TTL (seconds) of the latest cache write: 3600 or 300.
+    /// None until a usage record with a 5m/1h split has written to the cache.
+    pub cache_ttl_seconds: Option<u32>,
     pub slug: Option<String>,
     /// Per-turn accumulated cost breakdown. Each assistant turn's tokens are
     /// priced individually (correct: 200k tiering is per-API-request, not
@@ -63,6 +66,10 @@ pub struct RichSessionData {
     pub last_user_message: Option<String>,
     #[ts(type = "number | null")]
     pub last_cache_hit_at: Option<i64>,
+    /// Prompt-cache TTL (seconds) of the latest cache write (3600 or 300);
+    /// null when unknown (treat as 300).
+    #[ts(type = "number | null")]
+    pub cache_ttl_seconds: Option<u32>,
     pub slug: Option<String>,
     /// SDLC phase classification: current phase, label history, and dominant phase.
     pub phase: PhaseHistory,
@@ -85,6 +92,7 @@ impl SessionAccumulator {
             todo_items: Vec::new(),
             task_items: Vec::new(),
             last_cache_hit_at: None,
+            cache_ttl_seconds: None,
             slug: None,
             accumulated_cost: CostBreakdown::default(),
             seen_api_calls: HashSet::new(),

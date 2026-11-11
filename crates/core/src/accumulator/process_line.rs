@@ -79,6 +79,12 @@ impl SessionAccumulator {
                 self.last_cache_hit_at = parse_timestamp_to_unix(ts);
             }
         }
+        if let Some(ttl) = crate::cache_ttl::ttl_for_cache_write(
+            line.cache_creation_5m_tokens,
+            line.cache_creation_1hr_tokens,
+        ) {
+            self.cache_ttl_seconds = Some(ttl);
+        }
 
         // -----------------------------------------------------------------
         // Token + cost accumulation -- guarded by dedup

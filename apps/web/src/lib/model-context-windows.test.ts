@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { getContextLimit } from './model-context-windows'
+import {
+  AUTOCOMPACT_RESERVE_TOKENS,
+  autocompactThresholdPct,
+  getContextLimit,
+  knownContextWindow,
+} from './model-context-windows'
 
 describe('getContextLimit', () => {
   describe('200K default — fill within normal range', () => {
@@ -85,5 +90,49 @@ describe('getContextLimit', () => {
       const usedPct = (fill / limit) * 100
       expect(usedPct).toBe(40)
     })
+  })
+})
+
+describe('model windows from Claude Code model table', () => {
+  it('gives 1M from the first request for the current models', () => {
+    for (const m of [
+      'claude-opus-5-5',
+      'claude-fable-5-2',
+      'claude-sonnet-5-5',
+      'claude-haiku-5-5',
+    ]) {
+      expect(getContextLimit(m, 10_000)).toBe(1_000_000)
+      expect(knownContextWindow(m)).toBe(1_000_000)
+    }
+  })
+
+  it('normalises provider prefixes, dates and [1m] tags', () => {
+    expect(knownContextWindow('us.anthropic.claude-opus-5-5-v1:0')).toBe(1_000_000)
+    expect(knownContextWindow('claude-opus-5-5[1m]')).toBe(1_000_000)
+    expect(knownContextWindow('claude-opus-5-5-20261001')).toBe(1_000_000)
+  })
+
+  it('does not confuse claude-opus-5 with an unknown longer id', () => {
+    expect(knownContextWindow('claude-opus-5-9')).toBeNull()
+    expect(getContextLimit('claude-opus-5-9', 10_000)).toBe(200_000)
+  })
+
+  it('keeps the 200k default (and fill guess) for 200k-window models', () => {
+    expect(knownContextWindow('claude-sonnet-4-6')).toBeNull()
+    expect(getContextLimit('claude-sonnet-4-6', 10_000)).toBe(200_000)
+    expect(getContextLimit('claude-sonnet-4-6[1m]', 10_000)).toBe(1_000_000)
+  })
+
+  it('statusline size still wins over the table', () => {
+    expect(getContextLimit('claude-opus-5-5', 10_000, 200_000)).toBe(200_000)
+  })
+})
+
+describe('autocompact threshold', () => {
+  it('is window minus 33k: 96.7% of 1M, 83.5% of 200k', () => {
+    expect(AUTOCOMPACT_RESERVE_TOKENS).toBe(33_000)
+    expect(autocompactThresholdPct(1_000_000)).toBeCloseTo(96.7, 5)
+    expect(Math.round(autocompactThresholdPct(1_000_000))).toBe(97)
+    expect(autocompactThresholdPct(200_000)).toBeCloseTo(83.5, 5)
   })
 })

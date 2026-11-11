@@ -5,6 +5,7 @@ import {
   findSubAgentContext,
   subAgentCostUsd,
 } from '../../hooks/use-subagent-context'
+import { formatModelName } from '../../lib/format-model'
 import { formatCostUsd } from '../../lib/format-utils'
 import { getContextLimit } from '../../lib/model-context-windows'
 import { cn } from '../../lib/utils'
@@ -34,6 +35,17 @@ export function subAgentWindowSize(ctx: SubAgentContext): number | null {
 }
 
 /**
+ * Short model name for a sub-agent row: "claude-opus-5-5" → "Opus 5.5".
+ * Drops Claude Code's "[1m]" window marker. Null when no model is known.
+ */
+export function subAgentModelLabel(model: string | undefined): string | null {
+  if (!model) return null
+  const bare = model.replace(/\[1m\]$/i, '')
+  if (!bare) return null
+  return formatModelName(bare).replace(/^Claude /, '')
+}
+
+/**
  * Context-window line for one sub-agent: size at its first request, now, and
  * at its largest request.
  *
@@ -52,12 +64,28 @@ export function SubAgentContextRow({
   const barColor =
     pct == null ? '' : pct >= 80 ? 'bg-red-500' : pct >= 60 ? 'bg-amber-500' : 'bg-sky-500'
   const dot = <span className="text-gray-300 dark:text-gray-600">&middot;</span>
+  const modelLabel = subAgentModelLabel(ctx.model)
   return (
     <div
       className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 pl-4 text-xs font-mono text-gray-400 dark:text-gray-500 [&>span]:whitespace-nowrap"
       data-testid="subagent-context"
       title={`${ctx.requestCount} request${ctx.requestCount !== 1 ? 's' : ''}; context = input + cache read + cache write tokens`}
     >
+      {modelLabel && (
+        <span
+          className="text-gray-600 dark:text-gray-300"
+          data-testid="subagent-model"
+          title={`Model of the latest request: ${ctx.model}`}
+        >
+          {modelLabel}
+        </span>
+      )}
+      {ctx.effort && (
+        <span data-testid="subagent-effort" title="Effort level of the latest request">
+          {ctx.effort} effort
+        </span>
+      )}
+      {(modelLabel || ctx.effort) && dot}
       <span className="text-gray-500 dark:text-gray-400">ctx</span>
       <span>start {formatTokensCompact(ctx.startContextTokens)}</span>
       {dot}

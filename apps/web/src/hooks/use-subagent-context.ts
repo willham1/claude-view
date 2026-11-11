@@ -10,6 +10,8 @@ export interface SubAgentContext {
   agentId: string
   toolUseId?: string
   model?: string
+  /** Effort level of the latest request (`low` … `max`), when recorded. */
+  effort?: string
   requestCount: number
   startContextTokens: number
   currentContextTokens: number

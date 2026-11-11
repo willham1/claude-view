@@ -26,6 +26,11 @@ pub struct SubAgentContext {
     /// Model of the latest request.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Effort level of the latest request (`low` … `max`), from the
+    /// top-level `effort` field Claude Code writes on each assistant line.
+    /// `None` for transcripts written before Claude Code recorded it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     /// Number of distinct API requests (by `message.id`).
     pub request_count: u32,
     /// Context size of the first request (system prompt + task brief).
@@ -141,6 +146,13 @@ pub fn summarize_subagent_jsonl(agent_id: &str, text: &str) -> SubAgentContext {
                 out.model = Some(m.to_string());
             }
         }
+        if let Some(e) = v
+            .get("effort")
+            .and_then(|x| x.as_str())
+            .filter(|e| !e.is_empty())
+        {
+            out.effort = Some(e.to_string());
+        }
         if let Some(ts) = v.get("timestamp").and_then(|x| x.as_str()) {
             if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
                 out.last_activity_at = Some(dt.timestamp());
@@ -230,6 +242,42 @@ mod tests {
         let s = summarize_subagent_jsonl("a", &priced("m1", "gpt-made-up", u));
         assert_eq!(s.cost_usd, None);
         assert!(s.has_unpriced_usage);
+    }
+
+    #[test]
+    fn effort_is_from_the_latest_request() {
+        let u = r#"{"input_tokens":10,"output_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}"#;
+        let line = |id: &str, effort: Option<&str>| {
+            let e = effort
+                .map(|e| format!(r#""effort":"{e}","#))
+                .unwrap_or_default();
+            format!(
+                r#"{{"type":"assistant",{e}"message":{{"id":"{id}","model":"claude-opus-5-5","content":[],"usage":{u}}}}}"#
+            )
+        };
+        // Effort changes mid-run; a line without the field keeps the last one.
+        let text = [
+            line("m1", Some("high")),
+            line("m2", Some("medium")),
+            line("m3", None),
+        ]
+        .join("\n");
+        let s = summarize_subagent_jsonl("a", &text);
+        assert_eq!(s.effort.as_deref(), Some("medium"));
+        assert_eq!(s.model.as_deref(), Some("claude-opus-5-5"));
+
+        // A `<synthetic>` placeholder after a real reply (the common real-world
+        // case: no effort field, zero usage) leaves model and effort unchanged.
+        let synthetic = r#"{"type":"assistant","message":{"id":"s1","model":"<synthetic>","content":[],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#;
+        let text = [line("m1", Some("xhigh")), synthetic.to_string()].join("\n");
+        let s = summarize_subagent_jsonl("a", &text);
+        assert_eq!(s.effort.as_deref(), Some("xhigh"));
+        assert_eq!(s.model.as_deref(), Some("claude-opus-5-5"));
+        assert_eq!(s.request_count, 1);
+
+        // Older transcripts have no effort field.
+        let s = summarize_subagent_jsonl("a", &line("m1", None));
+        assert!(s.effort.is_none());
     }
 
     #[test]

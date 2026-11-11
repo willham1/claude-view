@@ -3,7 +3,13 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { type SubAgentContext, findSubAgentContext } from '../../hooks/use-subagent-context'
 import type { SubAgentInfo } from '../../types/generated/SubAgentInfo'
-import { SubAgentContextRow, SwimLanes, subAgentModelLabel, subAgentWindowSize } from './SwimLanes'
+import {
+  SubAgentCacheTimer,
+  SubAgentContextRow,
+  SwimLanes,
+  subAgentModelLabel,
+  subAgentWindowSize,
+} from './SwimLanes'
 
 // Helper to create minimal SubAgentInfo fixture
 function makeSubAgent(overrides?: Partial<SubAgentInfo>): SubAgentInfo {
@@ -248,24 +254,15 @@ describe('SwimLanes', () => {
   })
 
   describe('scrolling behavior', () => {
-    it('enables scroll when more than 5 agents', () => {
+    it('has no inner height cap or scroll (the tab scrolls it)', () => {
       const agents = Array.from({ length: 6 }, (_, i) =>
         makeSubAgent({ toolUseId: `${i}`, description: `Agent ${i}` }),
       )
       const { container } = render(<SwimLanes subAgents={agents} sessionActive={true} />)
 
       const wrapper = container.firstElementChild
-      expect(wrapper?.className).toContain('overflow-y-auto')
-    })
-
-    it('does not enable scroll when 5 or fewer agents', () => {
-      const agents = Array.from({ length: 5 }, (_, i) =>
-        makeSubAgent({ toolUseId: `${i}`, description: `Agent ${i}` }),
-      )
-      const { container } = render(<SwimLanes subAgents={agents} sessionActive={true} />)
-
-      const wrapper = container.firstElementChild
       expect(wrapper?.className).not.toContain('overflow-y-auto')
+      expect(wrapper?.className).not.toContain('max-h-')
     })
   })
 
@@ -482,5 +479,41 @@ describe('findSubAgentContext', () => {
     expect(findSubAgentContext({ agentId: null, toolUseId: 't1' }, list)?.agentId).toBe('a')
     expect(findSubAgentContext({ agentId: 'x', toolUseId: 'nope' }, list)).toBeUndefined()
     expect(findSubAgentContext({ agentId: 'a', toolUseId: 't1' }, undefined)).toBeUndefined()
+  })
+})
+
+describe('SubAgentCacheTimer', () => {
+  const base: SubAgentContext = {
+    agentId: 'a',
+    requestCount: 3,
+    startContextTokens: 1000,
+    currentContextTokens: 2000,
+    peakContextTokens: 2000,
+  }
+
+  it('counts down a 1h cache from the latest request', () => {
+    const now = Math.floor(Date.now() / 1000)
+    render(
+      <SubAgentCacheTimer ctx={{ ...base, lastActivityAt: now - 600, cacheTtlSeconds: 3600 }} />,
+    )
+    const text = screen.getByTestId('subagent-cache').textContent ?? ''
+    expect(text).toMatch(/cache (50:00|49:5\d) left \(1h\)/)
+  })
+
+  it('treats an unknown lifetime as 5 minutes and shows expired', () => {
+    const now = Math.floor(Date.now() / 1000)
+    render(<SubAgentCacheTimer ctx={{ ...base, lastActivityAt: now - 600 }} />)
+    expect(screen.getByTestId('subagent-cache').textContent).toBe('cache expired (5m)')
+  })
+
+  it('is part of the context row when the latest request time is known', () => {
+    const now = Math.floor(Date.now() / 1000)
+    render(<SubAgentContextRow ctx={{ ...base, lastActivityAt: now, cacheTtlSeconds: 300 }} />)
+    expect(screen.getByTestId('subagent-context').textContent).toContain('cache 5:00 left (5m)')
+  })
+
+  it('is left out when the latest request time is unknown', () => {
+    render(<SubAgentContextRow ctx={base} />)
+    expect(screen.queryByTestId('subagent-cache')).toBeNull()
   })
 })

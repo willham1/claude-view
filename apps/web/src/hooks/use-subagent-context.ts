@@ -18,6 +18,12 @@ export interface SubAgentContext {
   peakContextTokens: number
   lastActivityAt?: number
   /**
+   * Prompt-cache lifetime (3600 or 300 s) of the sub-agent's latest cache
+   * write; absent when unknown (treated as 5 minutes). Its cache stays warm
+   * for this long after `lastActivityAt`.
+   */
+  cacheTtlSeconds?: number
+  /**
    * Cost of the sub-agent's own requests at Anthropic list prices (USD), from
    * its transcript usage; cache writes priced by their 5m/1h split.
    */

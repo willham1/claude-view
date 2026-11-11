@@ -60,6 +60,7 @@ import { DisplayModeToggle } from './DisplayModeToggle'
 import { PlanTab } from './PlanTab'
 import { ProjectMemorySection } from './ProjectMemorySection'
 import { SessionBadges } from './SessionBadges'
+import { SessionGlanceStrip } from './SessionGlanceStrip'
 import { SubAgentBlockView } from './SubAgentBlockView'
 import { SubAgentPills } from './SubAgentPills'
 import { SwimLanes } from './SwimLanes'
@@ -404,7 +405,8 @@ export function SessionDetailPanel({
   // Team sidechains price every subagents/agent-*.jsonl of the session, the same
   // files sub-agent costs come from, so count one or the other, never both.
   const calculatedCostUsd =
-    data.cost.totalUsd + (sidechainsData && sidechainsData.length > 0 ? sidechainCostUsd : subAgentCostUsd)
+    data.cost.totalUsd +
+    (sidechainsData && sidechainsData.length > 0 ? sidechainCostUsd : subAgentCostUsd)
   const totalCostUsd = calculatedCostUsd > 0 ? calculatedCostUsd : (dbCostUsd ?? 0)
   const totalCostLabel = hasUnavailableCost(totalCostUsd, data.cost, data.tokens.totalTokens)
     ? 'Unavailable'
@@ -939,8 +941,13 @@ export function SessionDetailPanel({
               />
             ) : hasSubAgents ? (
               <>
-                {/* Swim lanes (~50% height) */}
-                <div className="flex-1 min-h-0 overflow-y-auto p-4">
+                {/* Main session at a glance: cache timer, context, helper counts */}
+                <div className="shrink-0 px-4 pt-4">
+                  <SessionGlanceStrip data={data} subAgents={subAgents ?? []} isLive={isLive} />
+                </div>
+
+                {/* Swim lanes (takes the remaining height) */}
+                <div className="flex-1 min-h-0 overflow-y-auto p-4 pt-3">
                   <SwimLanes
                     subAgents={subAgents ?? []}
                     sessionActive={data.status === 'working'}
@@ -949,9 +956,9 @@ export function SessionDetailPanel({
                   />
                 </div>
 
-                {/* Timeline (~50% height, only when startedAt is available) */}
+                {/* Timeline (sized to its rows, at most 40% height; only when startedAt is available) */}
                 {data.startedAt && (
-                  <div className="flex-1 min-h-0 overflow-y-auto p-4 border-t border-gray-200 dark:border-gray-800">
+                  <div className="shrink-0 max-h-[40%] overflow-y-auto p-4 border-t border-gray-200 dark:border-gray-800">
                     <TimelineView
                       subAgents={data.subAgents ?? []}
                       sessionStartedAt={data.startedAt}

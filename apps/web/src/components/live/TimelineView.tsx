@@ -14,22 +14,26 @@ interface TimelineViewProps {
 
 /* ── Helpers ─────────────────────────────────── */
 
-function formatDurationSeconds(ms: number): string {
-  return `${(ms / 1000).toFixed(1)}s`
+/** Bar colours by status, one meaning each (shown in the legend). */
+const STATUS_COLORS = {
+  running: 'bg-emerald-500 dark:bg-emerald-400',
+  complete: 'bg-sky-500/70 dark:bg-sky-400/60',
+  error: 'bg-red-500 dark:bg-red-400',
+} as const
+
+function getBarColor(status: string): string {
+  if (status === 'error') return STATUS_COLORS.error
+  if (status === 'running') return STATUS_COLORS.running
+  return STATUS_COLORS.complete
 }
 
-/** Color by agent type; error/running override type color */
-function getBarColor(agentType: string, status: string): string {
-  if (status === 'error') return 'bg-red-500 dark:bg-red-400'
-  if (status === 'running') return 'bg-emerald-500 dark:bg-emerald-400'
-
-  const t = agentType.toLowerCase()
-  if (t === 'explore') return 'bg-blue-500 dark:bg-blue-400'
-  if (t === 'plan') return 'bg-amber-500 dark:bg-amber-400'
-  if (t.includes('review')) return 'bg-violet-500 dark:bg-violet-400'
-  if (t.includes('search')) return 'bg-sky-500 dark:bg-sky-400'
-  if (t.includes('super')) return 'bg-indigo-500 dark:bg-indigo-400'
-  return 'bg-emerald-500 dark:bg-emerald-400'
+function LegendSwatch({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className={cn('inline-block w-2.5 h-2 rounded-sm', color)} />
+      {label}
+    </span>
+  )
 }
 
 /** Adaptive time-axis intervals, capped to ≤10 labels */
@@ -80,8 +84,8 @@ function formatTimeLabel(seconds: number): string {
  * TimelineView — Gantt-like timeline showing when sub-agents ran.
  *
  * Each agent is a coloured bar positioned by its start offset,
- * sized by duration. Colour encodes agent type; tooltip shows
- * description, cost, and tool-use count.
+ * sized by duration. Colour encodes status (running / finished / failed,
+ * with a legend); tooltip shows description, cost, and tool-use count.
  */
 export function TimelineView({
   subAgents,
@@ -131,6 +135,20 @@ export function TimelineView({
 
   return (
     <div className="flex flex-col gap-1.5 overflow-hidden">
+      {/* ── How to read it ── */}
+      <div
+        className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-gray-500 dark:text-gray-400"
+        data-testid="timeline-legend"
+      >
+        <span>
+          When each helper ran: one row per helper, time since the session started
+          {hasRunning ? '; right edge = now' : ''}. Hover a bar for details.
+        </span>
+        <LegendSwatch color={STATUS_COLORS.running} label="running" />
+        <LegendSwatch color={STATUS_COLORS.complete} label="finished" />
+        <LegendSwatch color={STATUS_COLORS.error} label="failed" />
+      </div>
+
       {/* ── Time axis (aligned with bar tracks via matching spacer) ── */}
       <div className="flex items-end gap-2">
         {/* Spacer matching the label column width */}
@@ -183,7 +201,7 @@ export function TimelineView({
             widthPct = 1
           }
 
-          const barColor = getBarColor(agent.agentType, agent.status)
+          const barColor = getBarColor(agent.status)
           const label = agent.description || agent.agentType
 
           const tooltipContent = (
@@ -191,7 +209,12 @@ export function TimelineView({
               <div className="font-semibold text-gray-900 dark:text-white">{agent.agentType}</div>
               <div className="text-gray-600 dark:text-gray-300">{agent.description}</div>
               <div className="flex gap-3 text-gray-500 dark:text-gray-400 mt-1">
-                {agent.durationMs != null && <span>{formatDurationSeconds(agent.durationMs)}</span>}
+                <span>
+                  started {formatTimeLabel(Math.max(0, agent.startedAt - sessionStartedAt))} in
+                </span>
+                {agent.durationMs != null && (
+                  <span>ran {formatTimeLabel(agent.durationMs / 1000)}</span>
+                )}
                 {agent.costUsd != null && <span>{formatCostUsd(agent.costUsd)}</span>}
                 {agent.toolUseCount != null && <span>{agent.toolUseCount} tools</span>}
               </div>

@@ -52,6 +52,12 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
    - Undo all of this (restore `bundled` on rusqlite and `sqlite` on sqlx, drop the config and ignore) once sqlx
      accepts libsqlite3-sys >= 0.39 — check when merging upstream.
 
+7. **Sub-Agents tab on one screen:** a strip at the top shows the main session's prompt-cache countdown (with bar),
+   context fill, turns and helper counts; each helper row shows its own cache countdown (`cacheTtlSeconds` from its
+   transcript, counted from its latest request); long error text is cut to two lines (full text on hover); the
+   timeline has a one-line "how to read it" and a colour key, colours by status (running / finished / failed), and
+   sizes to its rows instead of half the panel.
+
 ## Running it
 
 - Launcher scripts are in `fork/launcher/` and find the repo from their own location. They run read-only:

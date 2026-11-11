@@ -34,3 +34,21 @@ export function formatCacheTtl(cacheTtlSeconds: number | null | undefined): stri
   const ttl = effectiveCacheTtl(cacheTtlSeconds)
   return ttl % 3600 === 0 ? `${ttl / 3600}h` : `${Math.round(ttl / 60)}m`
 }
+
+/** "41:20" style label for seconds left (m:ss, or h:mm:ss from an hour). */
+export function formatCacheRemaining(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds))
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const ss = (s % 60).toString().padStart(2, '0')
+  return h > 0 ? `${h}:${m.toString().padStart(2, '0')}:${ss}` : `${m}:${ss}`
+}
+
+/** Tailwind text colour for a cache countdown: green, amber under 60%, red under 20%. */
+export function cacheRemainingTextColor(remaining: number, ttl: number): string {
+  if (remaining <= 0) return 'text-gray-400 dark:text-gray-500'
+  const f = remaining / ttl
+  if (f < 0.2) return 'text-red-500 dark:text-red-400'
+  if (f < 0.6) return 'text-amber-600 dark:text-amber-400'
+  return 'text-green-600 dark:text-green-400'
+}

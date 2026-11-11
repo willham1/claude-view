@@ -42,6 +42,12 @@ pub struct SubAgentContext {
     /// Unix seconds of the latest assistant line with usage.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_activity_at: Option<i64>,
+    /// Prompt-cache lifetime (3600 or 300 s) of the sub-agent's latest cache
+    /// write, by the same rule as the main session (`crate::cache_ttl`).
+    /// `None` when no write recorded a 5m/1h split. Its cache stays warm for
+    /// this long after `last_activity_at` (each request reads or writes it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_ttl_seconds: Option<u32>,
     /// Cost of the sub-agent's own requests at Anthropic list prices (USD),
     /// each request priced with its model's rates and its cache writes split
     /// by 5-minute / 1-hour lifetime. `None` when no request could be priced.
@@ -137,6 +143,16 @@ pub fn summarize_subagent_jsonl(agent_id: &str, text: &str) -> SubAgentContext {
                 out.start_context_tokens = ctx;
             }
             out.request_count += 1;
+        }
+
+        if let Some(cc) = usage.get("cache_creation") {
+            let t = |k: &str| cc.get(k).and_then(|x| x.as_u64());
+            if let Some(ttl) = crate::cache_ttl::ttl_for_cache_write(
+                t("ephemeral_5m_input_tokens"),
+                t("ephemeral_1h_input_tokens"),
+            ) {
+                out.cache_ttl_seconds = Some(ttl);
+            }
         }
 
         out.current_context_tokens = ctx;
@@ -242,6 +258,40 @@ mod tests {
         let s = summarize_subagent_jsonl("a", &priced("m1", "gpt-made-up", u));
         assert_eq!(s.cost_usd, None);
         assert!(s.has_unpriced_usage);
+    }
+
+    #[test]
+    fn cache_ttl_is_from_the_latest_cache_write() {
+        let w = |t5: u64, t1: u64| {
+            format!(
+                r#"{{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":100,"cache_creation_input_tokens":{},"cache_creation":{{"ephemeral_5m_input_tokens":{t5},"ephemeral_1h_input_tokens":{t1}}}}}"#,
+                t5 + t1
+            )
+        };
+        let read_only = r#"{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":100,"cache_creation_input_tokens":0}"#;
+        // No split recorded: unknown.
+        let s = summarize_subagent_jsonl("a", &priced("m1", "claude-opus-5-5", read_only));
+        assert_eq!(s.cache_ttl_seconds, None);
+        // 1h write, then a read-only request: stays 1h.
+        let text = [
+            priced("m1", "claude-opus-5-5", &w(0, 500)),
+            priced("m2", "claude-opus-5-5", read_only),
+        ]
+        .join("\n");
+        assert_eq!(
+            summarize_subagent_jsonl("a", &text).cache_ttl_seconds,
+            Some(3600)
+        );
+        // A later 5m write wins.
+        let text = [
+            priced("m1", "claude-opus-5-5", &w(0, 500)),
+            priced("m2", "claude-opus-5-5", &w(20, 0)),
+        ]
+        .join("\n");
+        assert_eq!(
+            summarize_subagent_jsonl("a", &text).cache_ttl_seconds,
+            Some(300)
+        );
     }
 
     #[test]

@@ -54,6 +54,7 @@ import { TodoChecklist } from '../session/TodoChecklist'
 import { TeamsTab } from '../teams/TeamsTab'
 import { CacheCountdownBar } from './CacheCountdownBar'
 import { ChangesTab } from './ChangesTab'
+import { CollapsibleTimeline } from './CollapsibleTimeline'
 import { ContextGauge } from './ContextGauge'
 import { CostBreakdown } from './CostBreakdown'
 import { DisplayModeToggle } from './DisplayModeToggle'
@@ -937,6 +938,10 @@ export function SessionDetailPanel({
                 agentId={drillDownAgent.agentId}
                 agentType={drillDownAgent.agentType}
                 description={drillDownAgent.description}
+                isRunning={
+                  (data.subAgents ?? []).find((a) => a.agentId === drillDownAgent.agentId)
+                    ?.status === 'running'
+                }
                 onClose={() => setDrillDownAgent(null)}
               />
             ) : hasSubAgents ? (
@@ -956,9 +961,10 @@ export function SessionDetailPanel({
                   />
                 </div>
 
-                {/* Timeline (sized to its rows, at most 40% height; only when startedAt is available) */}
+                {/* Timeline: collapsed by default so the list gets the room.
+                    Only when startedAt is known. */}
                 {data.startedAt && (
-                  <div className="shrink-0 max-h-[40%] overflow-y-auto p-4 border-t border-gray-200 dark:border-gray-800">
+                  <CollapsibleTimeline>
                     <TimelineView
                       subAgents={data.subAgents ?? []}
                       sessionStartedAt={data.startedAt}
@@ -968,7 +974,7 @@ export function SessionDetailPanel({
                           : Date.now() - data.startedAt * 1000
                       }
                     />
-                  </div>
+                  </CollapsibleTimeline>
                 )}
               </>
             ) : (

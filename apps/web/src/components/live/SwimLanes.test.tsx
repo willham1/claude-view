@@ -122,8 +122,49 @@ describe('SwimLanes', () => {
       })
       render(<SwimLanes subAgents={[agent]} onDrillDown={onDrillDown} />)
 
-      await user.click(screen.getByText('Find files'))
+      await user.click(screen.getByTestId('subagent-row'))
       expect(onDrillDown).toHaveBeenCalledWith('agent-abc', 'search', 'Find files')
+    })
+
+    it('opens from the Open button', async () => {
+      const user = userEvent.setup()
+      const onDrillDown = vi.fn()
+      const agent = makeSubAgent({
+        agentId: 'agent-abc',
+        agentType: 'search',
+        description: 'Find files',
+      })
+      render(<SwimLanes subAgents={[agent]} onDrillDown={onDrillDown} />)
+
+      await user.click(screen.getByRole('button', { name: /Open search: Find files/ }))
+      expect(onDrillDown).toHaveBeenCalledTimes(1)
+    })
+
+    it('clicking the task title does not open the helper (so it can be selected and copied)', async () => {
+      const user = userEvent.setup()
+      const onDrillDown = vi.fn()
+      const agent = makeSubAgent({ agentId: 'agent-abc', description: 'Copy me' })
+      render(<SwimLanes subAgents={[agent]} onDrillDown={onDrillDown} />)
+
+      const title = screen.getByTestId('subagent-title')
+      expect(title.className).toContain('select-text')
+      await user.click(title)
+      await user.dblClick(title)
+      expect(onDrillDown).not.toHaveBeenCalled()
+    })
+
+    it('a click that ends a text selection does not open the helper', () => {
+      const onDrillDown = vi.fn()
+      const agent = makeSubAgent({ agentId: 'agent-abc', description: 'Copy me' })
+      render(<SwimLanes subAgents={[agent]} onDrillDown={onDrillDown} />)
+
+      const range = document.createRange()
+      range.selectNodeContents(screen.getByTestId('subagent-title'))
+      window.getSelection()?.removeAllRanges()
+      window.getSelection()?.addRange(range)
+      screen.getByTestId('subagent-row').click()
+      expect(onDrillDown).not.toHaveBeenCalled()
+      window.getSelection()?.removeAllRanges()
     })
 
     it('does not call onDrillDown when agent has no agentId', async () => {
@@ -136,7 +177,8 @@ describe('SwimLanes', () => {
       })
       render(<SwimLanes subAgents={[agent]} onDrillDown={onDrillDown} />)
 
-      await user.click(screen.getByText('Still starting'))
+      await user.click(screen.getByTestId('subagent-row'))
+      expect(screen.queryByRole('button', { name: /Open/ })).toBeNull()
       expect(onDrillDown).not.toHaveBeenCalled()
     })
 
@@ -151,24 +193,26 @@ describe('SwimLanes', () => {
       })
       render(<SwimLanes subAgents={[agent]} onDrillDown={onDrillDown} />)
 
-      await user.click(screen.getByText('Exploring codebase'))
+      await user.click(screen.getByTestId('subagent-row'))
       expect(onDrillDown).toHaveBeenCalledWith('agent-live', 'explore', 'Exploring codebase')
     })
   })
 
   describe('sorting', () => {
-    it('sorts running agents before completed', () => {
+    // Timestamps are unix seconds, as from the server.
+    it('on equal last activity, puts running agents before completed', () => {
       const agents = [
         makeSubAgent({
           toolUseId: '1',
           status: 'complete',
-          completedAt: Date.now(),
+          startedAt: 900,
+          completedAt: 1000,
           description: 'Completed first',
         }),
         makeSubAgent({
           toolUseId: '2',
           status: 'running',
-          startedAt: Date.now(),
+          startedAt: 1000,
           description: 'Running second',
         }),
       ]
@@ -180,17 +224,19 @@ describe('SwimLanes', () => {
     })
 
     it('sorts completed agents by completedAt desc', () => {
-      const now = Date.now()
+      const now = 10_000
       const agents = [
         makeSubAgent({
           toolUseId: '1',
           status: 'complete',
+          startedAt: 100,
           completedAt: now - 2000,
           description: 'Older',
         }),
         makeSubAgent({
           toolUseId: '2',
           status: 'complete',
+          startedAt: 50,
           completedAt: now,
           description: 'Newer',
         }),
@@ -202,27 +248,41 @@ describe('SwimLanes', () => {
       expect(descriptions[1]).toHaveTextContent('Older')
     })
 
-    it('sorts running agents by startedAt asc', () => {
-      const now = Date.now()
+    it('puts the most recently active helper first, using transcript activity', () => {
       const agents = [
         makeSubAgent({
           toolUseId: '1',
+          agentId: 'a1',
           status: 'running',
-          startedAt: now,
-          description: 'Started later',
+          startedAt: 100,
+          description: 'Started first',
         }),
         makeSubAgent({
           toolUseId: '2',
+          agentId: 'a2',
           status: 'running',
-          startedAt: now - 2000,
-          description: 'Started earlier',
+          startedAt: 200,
+          description: 'Started second',
         }),
       ]
-      render(<SwimLanes subAgents={agents} sessionActive={true} />)
+      const ctx = (agentId: string, lastActivityAt: number): SubAgentContext => ({
+        agentId,
+        requestCount: 1,
+        startContextTokens: 1,
+        currentContextTokens: 1,
+        peakContextTokens: 1,
+        lastActivityAt,
+      })
+      const { rerender } = render(
+        <SwimLanes subAgents={agents} contexts={[ctx('a1', 150), ctx('a2', 210)]} />,
+      )
+      let titles = screen.getAllByTestId('subagent-title')
+      expect(titles.map((t) => t.textContent)).toEqual(['Started second', 'Started first'])
 
-      const descriptions = screen.getAllByText(/Started earlier|Started later/)
-      expect(descriptions[0]).toHaveTextContent('Started earlier')
-      expect(descriptions[1]).toHaveTextContent('Started later')
+      // The first helper does something new: it moves to the top.
+      rerender(<SwimLanes subAgents={agents} contexts={[ctx('a1', 300), ctx('a2', 210)]} />)
+      titles = screen.getAllByTestId('subagent-title')
+      expect(titles.map((t) => t.textContent)).toEqual(['Started first', 'Started second'])
     })
   })
 

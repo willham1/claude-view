@@ -57,6 +57,17 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
    transcript, counted from its latest request); long error text is cut to two lines (full text on hover); the
    timeline has a one-line "how to read it" and a colour key, colours by status (running / finished / failed), and
    sizes to its rows instead of half the panel.
+8. **Sub-Agents tab, follow-up (W1):** helper rows sort by last activity, most recent first (latest of start,
+   completion and the transcript's latest request; re-sorts live), `sortSubAgentsByLastActive`. The timeline is
+   collapsed by default under a "Timeline" toggle (choice kept in localStorage); it stays in start order, as a Gantt
+   chart (`CollapsibleTimeline.tsx`). A helper's task title is selectable text that wraps instead of being cut with
+   "…" (rows can be taller): clicking or selecting it doesn't open the helper; the row's "Open" button (or a plain
+   click elsewhere on the row) does. In the helper's view, the header's loaded / loading / error label is gone
+   (only "running" shows); each view says "Loading…" in its body instead, and errors show there as before. Opening a helper now shows a **Progress** view by
+   default, beside Chat and Developer: the helper's messages, with the tool calls between them folded into one
+   expandable summary row ("Ran 5 commands, edited 1 file +10 −29"; lines counted from the edit inputs) and
+   "Running …" for the call in progress; re-read every 3 s while the helper runs
+   (`apps/web/src/lib/subagent-progress.ts`, `SubAgentProgressView.tsx`).
 
 ## Running it
 

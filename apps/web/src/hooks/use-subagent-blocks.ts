@@ -30,7 +30,8 @@ export function useSubAgentBlocks({
   enabled,
 }: UseSubAgentBlocksOptions): UseSubAgentBlocksResult {
   const [blocks, setBlocks] = useState<ConversationBlock[]>([])
-  const [isLoading, setIsLoading] = useState(false)
+  // Loading from the first render when enabled, so "No messages yet" doesn't flash before the fetch.
+  const [isLoading, setIsLoading] = useState(enabled)
   const [isFetchingOlder, setIsFetchingOlder] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const offsetRef = useRef(0)

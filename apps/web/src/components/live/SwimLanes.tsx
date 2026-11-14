@@ -1,3 +1,4 @@
+import { ChevronRight } from 'lucide-react'
 import { useMemo } from 'react'
 import { useNowSeconds } from '../../hooks/use-now-seconds'
 import {
@@ -19,6 +20,13 @@ import { getContextLimit } from '../../lib/model-context-windows'
 import { cn } from '../../lib/utils'
 import type { SubAgentInfo } from '../../types/generated/SubAgentInfo'
 import { formatTokensCompact } from '../spinner/constants'
+import { sortSubAgentsByLastActive } from './sort-sub-agents'
+
+/** True while the user has text selected (a drag-select must not open the helper). */
+function hasTextSelection(): boolean {
+  const sel = typeof window !== 'undefined' ? window.getSelection() : null
+  return !!sel && !sel.isCollapsed && sel.toString().trim() !== ''
+}
 
 interface SwimLanesProps {
   subAgents: SubAgentInfo[]
@@ -200,22 +208,17 @@ function ProgressBar() {
  * - For finished: cost, duration, tool call count
  * - When known: context window (start / now / peak) from the sub-agent transcript
  *
- * Clicking a row opens the terminal drill-down (when agentId is available).
- * Rows are sorted: running first (by startedAt), then completed (by completedAt desc).
+ * Clicking a row (or its Open button) opens the helper's view (when agentId
+ * is available). The task title is plain selectable text: clicking or
+ * dragging over it, or any click that ends a text selection, doesn't open.
+ * Rows are sorted by last activity, most recent first, and re-sort as the
+ * transcripts update.
  */
 export function SwimLanes({ subAgents, onDrillDown, contexts }: SwimLanesProps) {
-  // Sort: Running first (by startedAt asc), then Complete/Error (by completedAt desc)
-  const sortedAgents = useMemo(() => {
-    const running = subAgents
-      .filter((a) => a.status === 'running')
-      .sort((a, b) => a.startedAt - b.startedAt)
-
-    const finished = subAgents
-      .filter((a) => a.status !== 'running')
-      .sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0))
-
-    return [...running, ...finished]
-  }, [subAgents])
+  const sortedAgents = useMemo(
+    () => sortSubAgentsByLastActive(subAgents, contexts),
+    [subAgents, contexts],
+  )
 
   if (subAgents.length === 0) return null
 
@@ -251,45 +254,62 @@ export function SwimLanes({ subAgents, onDrillDown, contexts }: SwimLanesProps) 
         const canDrillDown = !!agent.agentId && !!onDrillDown
         const ctx = findSubAgentContext(agent, contexts)
         const cost = subAgentCostUsd(agent, contexts)
+        const open = () => {
+          if (agent.agentId) onDrillDown?.(agent.agentId, agent.agentType, agent.description)
+        }
 
         return (
+          // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard users open the helper with the row's Open button
           <div
             key={agent.toolUseId}
-            role={canDrillDown ? 'button' : undefined}
-            tabIndex={canDrillDown ? 0 : undefined}
+            data-testid="subagent-row"
             onClick={
               canDrillDown
-                ? () => onDrillDown(agent.agentId!, agent.agentType, agent.description)
-                : undefined
-            }
-            onKeyDown={
-              canDrillDown
-                ? (e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
-                      onDrillDown!(agent.agentId!, agent.agentType, agent.description)
-                    }
+                ? () => {
+                    if (!hasTextSelection()) open()
                   }
                 : undefined
             }
             className={cn(
-              'flex flex-col gap-1 rounded-md px-2.5 py-2 transition-colors',
+              'group flex flex-col gap-1 rounded-md px-2.5 py-2 transition-colors',
               canDrillDown && 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-900/50',
             )}
           >
-            {/* Row 1: status + type + description + error tag */}
-            <div className="flex items-center gap-2">
-              <StatusDot status={agent.status} />
-              <span className="text-xs font-mono text-gray-500 dark:text-gray-400 uppercase tracking-wide flex-shrink-0">
+            {/* Row 1: status + type + description + error tag + open */}
+            <div className="flex items-start gap-2">
+              <span className="pt-1.5">
+                <StatusDot status={agent.status} />
+              </span>
+              <span className="text-xs font-mono text-gray-500 dark:text-gray-400 uppercase tracking-wide flex-shrink-0 pt-0.5">
                 {agent.agentType}
               </span>
-              <span className="text-sm text-gray-700 dark:text-gray-300 flex-1 truncate">
+              {/* Selectable title: clicks here never open the helper. */}
+              {/* biome-ignore lint/a11y/useKeyWithClickEvents: only stops the row's click; no action of its own */}
+              <span
+                className="text-sm text-gray-700 dark:text-gray-300 flex-1 min-w-0 break-words select-text cursor-text"
+                data-testid="subagent-title"
+                onClick={(e) => e.stopPropagation()}
+              >
                 {agent.description}
               </span>
               {agent.status === 'error' && (
-                <span className="text-xs font-semibold text-red-500 dark:text-red-400 uppercase flex-shrink-0">
+                <span className="text-xs font-semibold text-red-500 dark:text-red-400 uppercase flex-shrink-0 pt-0.5">
                   ERR
                 </span>
+              )}
+              {canDrillDown && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    open()
+                  }}
+                  aria-label={`Open ${agent.agentType}: ${agent.description}`}
+                  className="flex-shrink-0 inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs text-gray-400 dark:text-gray-500 group-hover:text-blue-600 dark:group-hover:text-blue-400 hover:bg-blue-500/10"
+                >
+                  Open
+                  <ChevronRight className="w-3 h-3" />
+                </button>
               )}
             </div>
 

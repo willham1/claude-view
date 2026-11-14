@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import type { SubAgentContext } from '../../hooks/use-subagent-context'
 import type { SubAgentInfo } from '../../types/generated/SubAgentInfo'
-import { sortSubAgentsForCard } from './sort-sub-agents'
+import {
+  sortSubAgentsByLastActive,
+  sortSubAgentsForCard,
+  subAgentLastActiveAt,
+} from './sort-sub-agents'
 
 // Mirrors the factory convention in use-sub-agents.test.ts
 function createAgent(overrides?: Partial<SubAgentInfo>): SubAgentInfo {
@@ -82,5 +87,56 @@ describe('sortSubAgentsForCard', () => {
 
   it('returns an empty array unchanged', () => {
     expect(sortSubAgentsForCard([])).toEqual([])
+  })
+})
+
+describe('sortSubAgentsByLastActive', () => {
+  const ctx = (agentId: string, lastActivityAt?: number, toolUseId?: string): SubAgentContext => ({
+    agentId,
+    toolUseId,
+    requestCount: 1,
+    startContextTokens: 0,
+    currentContextTokens: 0,
+    peakContextTokens: 0,
+    lastActivityAt,
+  })
+
+  it('orders by the latest of start, completion and transcript activity, newest first', () => {
+    const a = createAgent({
+      toolUseId: 'a',
+      agentId: 'A',
+      status: 'complete',
+      startedAt: 100,
+      completedAt: 500,
+    })
+    const b = createAgent({ toolUseId: 'b', agentId: 'B', status: 'running', startedAt: 300 })
+    const c = createAgent({ toolUseId: 'c', agentId: 'C', status: 'running', startedAt: 200 })
+    // c started earliest of the running ones but made a request most recently.
+    const sorted = sortSubAgentsByLastActive([a, b, c], [ctx('B', 350), ctx('C', 900)])
+    expect(sorted.map((x) => x.toolUseId)).toEqual(['c', 'a', 'b'])
+    expect(subAgentLastActiveAt(c, [ctx('C', 900)])).toBe(900)
+    expect(subAgentLastActiveAt(a)).toBe(500)
+  })
+
+  it('matches contexts by spawning toolUseId when the agent has no agentId yet', () => {
+    const a = createAgent({ toolUseId: 'a', startedAt: 100 })
+    const b = createAgent({ toolUseId: 'b', startedAt: 200 })
+    const sorted = sortSubAgentsByLastActive([a, b], [ctx('X', 999, 'a')])
+    expect(sorted.map((x) => x.toolUseId)).toEqual(['a', 'b'])
+  })
+
+  it('breaks ties with running first, then spawn order, without mutating the input', () => {
+    const done = createAgent({
+      toolUseId: 'done',
+      status: 'complete',
+      startedAt: 100,
+      completedAt: 400,
+    })
+    const run1 = createAgent({ toolUseId: 'run1', status: 'running', startedAt: 400 })
+    const run2 = createAgent({ toolUseId: 'run2', status: 'running', startedAt: 400 })
+    const input = [done, run1, run2]
+    const sorted = sortSubAgentsByLastActive(input)
+    expect(sorted.map((x) => x.toolUseId)).toEqual(['run1', 'run2', 'done'])
+    expect(input.map((x) => x.toolUseId)).toEqual(['done', 'run1', 'run2'])
   })
 })

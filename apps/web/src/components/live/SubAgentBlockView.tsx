@@ -90,10 +90,10 @@ function SubAgentTranscript({
       </div>
     )
   }
-  if (blocks.length === 0 && !isLoading) {
+  if (blocks.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-sm text-gray-400 dark:text-gray-500 p-4">
-        No messages yet
+        {isLoading ? 'Loading…' : 'No messages yet'}
       </div>
     )
   }

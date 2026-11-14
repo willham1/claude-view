@@ -1,6 +1,8 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { PROGRESS_POLL_MS } from '../../hooks/use-subagent-progress'
+import { useMonitorStore } from '../../store/monitor-store'
 import { SubAgentBlockView } from './SubAgentBlockView'
 
 const blocks = [
@@ -68,8 +70,8 @@ describe('SubAgentBlockView Progress tab', () => {
     expect(screen.getByText('List files')).toBeInTheDocument()
   })
 
-  it('does not show a running call for a finished helper, and does not poll', async () => {
-    const fn = mockFetch()
+  it('does not show a running call for a finished helper', async () => {
+    mockFetch()
     render(
       <SubAgentBlockView
         sessionId="s1"
@@ -81,8 +83,83 @@ describe('SubAgentBlockView Progress tab', () => {
     )
     await screen.findByText('Looking into it.')
     expect(screen.queryByTestId('progress-running')).toBeNull()
-    await new Promise((r) => setTimeout(r, 50))
+  })
+
+  it('does not re-read a finished helper, even well past the poll interval', async () => {
+    const fn = mockFetch()
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    render(
+      <SubAgentBlockView
+        sessionId="s1"
+        agentId="abc"
+        agentType="b"
+        description="d"
+        onClose={() => {}}
+      />,
+    )
+    await waitFor(() => expect(fn).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PROGRESS_POLL_MS * 3 + 100)
+    })
     expect(fn).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears an error on the next good response even when the transcript is unchanged', async () => {
+    const empty = JSON.stringify({ blocks: [], total: 0 })
+    let call = 0
+    globalThis.fetch = vi.fn(async () => {
+      call++
+      // good (empty), then a failure, then the same good body again
+      if (call === 2) return new Response(JSON.stringify({ error: 'boom' }), { status: 500 })
+      return new Response(empty)
+    }) as unknown as typeof fetch
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    render(
+      <SubAgentBlockView
+        sessionId="s1"
+        agentId="abc"
+        agentType="b"
+        description="d"
+        isRunning
+        onClose={() => {}}
+      />,
+    )
+    expect(await screen.findByText('No messages yet')).toBeInTheDocument()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PROGRESS_POLL_MS + 100)
+    })
+    expect(await screen.findByText('boom')).toBeInTheDocument()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PROGRESS_POLL_MS + 100)
+    })
+    await waitFor(() => expect(screen.queryByText('boom')).toBeNull())
+    expect(screen.getByText('No messages yet')).toBeInTheDocument()
+  })
+
+  it('Chat and Developer set the app-wide display mode and show the transcript', async () => {
+    mockFetch()
+    useMonitorStore.getState().setDisplayMode('chat')
+    const user = userEvent.setup()
+    render(
+      <SubAgentBlockView
+        sessionId="s1"
+        agentId="abc"
+        agentType="b"
+        description="d"
+        onClose={() => {}}
+      />,
+    )
+    await screen.findByText('Looking into it.')
+    await user.click(screen.getByRole('tab', { name: /Developer/ }))
+    expect(useMonitorStore.getState().displayMode).toBe('developer')
+    expect(screen.getByRole('tab', { name: /Developer/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByTestId('subagent-progress')).toBeNull()
+    await user.click(screen.getByRole('tab', { name: /Chat/ }))
+    expect(useMonitorStore.getState().displayMode).toBe('chat')
+    // Back to Progress leaves the app-wide mode alone.
+    await user.click(screen.getByRole('tab', { name: /Progress/ }))
+    expect(useMonitorStore.getState().displayMode).toBe('chat')
+    expect(await screen.findByTestId('subagent-progress')).toBeInTheDocument()
   })
 
   it('re-reads the transcript while the helper runs', async () => {
@@ -100,7 +177,7 @@ describe('SubAgentBlockView Progress tab', () => {
     )
     await waitFor(() => expect(fn).toHaveBeenCalledTimes(1))
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(3100)
+      await vi.advanceTimersByTimeAsync(PROGRESS_POLL_MS + 100)
     })
     await waitFor(() => expect(fn).toHaveBeenCalledTimes(2))
   })

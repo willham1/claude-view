@@ -46,10 +46,13 @@ export function useSubAgentProgress(
             // keep the status text
           }
           setError(msg)
-        } else if (body !== lastBody) {
-          lastBody = body
-          setBlocks(normalizeBlocks(JSON.parse(body).blocks ?? []))
+        } else {
+          // Any good response clears an earlier error, changed or not.
           setError(null)
+          if (body !== lastBody) {
+            lastBody = body
+            setBlocks(normalizeBlocks(JSON.parse(body).blocks ?? []))
+          }
         }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e))

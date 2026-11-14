@@ -6,8 +6,6 @@ import type { SessionOwnership } from '@claude-view/shared/types/generated/Sessi
 import {
   Check,
   CheckSquare,
-  ChevronDown,
-  ChevronRight,
   Clock,
   Copy,
   DollarSign,
@@ -56,6 +54,7 @@ import { TodoChecklist } from '../session/TodoChecklist'
 import { TeamsTab } from '../teams/TeamsTab'
 import { CacheCountdownBar } from './CacheCountdownBar'
 import { ChangesTab } from './ChangesTab'
+import { CollapsibleTimeline } from './CollapsibleTimeline'
 import { ContextGauge } from './ContextGauge'
 import { CostBreakdown } from './CostBreakdown'
 import { DisplayModeToggle } from './DisplayModeToggle'
@@ -122,25 +121,6 @@ const INLINE_PANEL_WIDTH_KEY = 'mc-inline-panel-width'
 const DEFAULT_PANEL_WIDTH = 480
 const DEFAULT_INLINE_PANEL_WIDTH = 288 // w-72 — matches left sidenav
 const MIN_PANEL_WIDTH = 288
-
-const TIMELINE_OPEN_KEY = 'claude-view:subagents-timeline-open'
-
-/** Whether the Sub-Agents tab's timeline is open (default: collapsed). */
-export function readTimelineOpen(): boolean {
-  try {
-    return localStorage.getItem(TIMELINE_OPEN_KEY) === '1'
-  } catch {
-    return false
-  }
-}
-
-function writeTimelineOpen(open: boolean) {
-  try {
-    localStorage.setItem(TIMELINE_OPEN_KEY, open ? '1' : '0')
-  } catch {
-    // storage unavailable: the choice lasts until reload
-  }
-}
 
 function getStoredPanelWidth(isInline: boolean): number {
   const key = isInline ? INLINE_PANEL_WIDTH_KEY : PANEL_WIDTH_KEY
@@ -302,15 +282,6 @@ export function SessionDetailPanel({
     agentType: string
     description: string
   } | null>(null)
-
-  // Sub-Agents tab timeline: collapsed by default; the choice is remembered.
-  const [timelineOpen, setTimelineOpen] = useState(() => readTimelineOpen())
-  const toggleTimeline = useCallback(() => {
-    setTimelineOpen((open) => {
-      writeTimelineOpen(!open)
-      return !open
-    })
-  }, [])
 
   // Resizable width (persisted to localStorage)
   const [panelWidth, setPanelWidth] = useState(() => getStoredPanelWidth(!!inline))
@@ -990,46 +961,20 @@ export function SessionDetailPanel({
                   />
                 </div>
 
-                {/* Timeline: collapsed by default so the list gets the room; when
-                    open, sized to its rows, at most 40% height. Only when startedAt is known. */}
+                {/* Timeline: collapsed by default so the list gets the room.
+                    Only when startedAt is known. */}
                 {data.startedAt && (
-                  <div
-                    className={cn(
-                      'shrink-0 border-t border-gray-200 dark:border-gray-800',
-                      timelineOpen && 'max-h-[40%] flex flex-col',
-                    )}
-                  >
-                    <button
-                      type="button"
-                      onClick={toggleTimeline}
-                      aria-expanded={timelineOpen}
-                      data-testid="subagent-timeline-toggle"
-                      className="flex items-center gap-1.5 w-full px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-900/50"
-                    >
-                      {timelineOpen ? (
-                        <ChevronDown className="w-3.5 h-3.5" />
-                      ) : (
-                        <ChevronRight className="w-3.5 h-3.5" />
-                      )}
-                      Timeline
-                      <span className="text-gray-400 dark:text-gray-500 font-normal">
-                        (when each helper ran)
-                      </span>
-                    </button>
-                    {timelineOpen && (
-                      <div className="min-h-0 overflow-y-auto px-4 pb-4">
-                        <TimelineView
-                          subAgents={data.subAgents ?? []}
-                          sessionStartedAt={data.startedAt}
-                          sessionDurationMs={
-                            data.status === 'done'
-                              ? ((data.lastActivityAt ?? 0) - data.startedAt) * 1000
-                              : Date.now() - data.startedAt * 1000
-                          }
-                        />
-                      </div>
-                    )}
-                  </div>
+                  <CollapsibleTimeline>
+                    <TimelineView
+                      subAgents={data.subAgents ?? []}
+                      sessionStartedAt={data.startedAt}
+                      sessionDurationMs={
+                        data.status === 'done'
+                          ? ((data.lastActivityAt ?? 0) - data.startedAt) * 1000
+                          : Date.now() - data.startedAt * 1000
+                      }
+                    />
+                  </CollapsibleTimeline>
                 )}
               </>
             ) : (

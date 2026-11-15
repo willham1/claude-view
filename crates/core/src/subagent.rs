@@ -126,6 +126,66 @@ impl SubAgentInfo {
             self.error_reason = Some(reason.to_string());
         }
     }
+
+    /// Apply a `<task-notification>` hand-back: "completed" marks the agent
+    /// Complete, any other status Error with that status as the reason.
+    /// Only a Running agent changes, so the copies Claude Code writes of one
+    /// notice (queue-operation enqueue/remove, attachment) keep the first time.
+    pub fn apply_task_notification(&mut self, status: &str, at: Option<i64>) {
+        if self.status != SubAgentStatus::Running {
+            return;
+        }
+        if status == "completed" {
+            self.status = SubAgentStatus::Complete;
+        } else {
+            self.status = SubAgentStatus::Error;
+            self.error_reason = Some(status.to_string());
+        }
+        self.completed_at = at;
+        self.current_activity = None;
+    }
+
+    /// A SendMessage resumed this agent after it handed back: it is working
+    /// again until its next notification.
+    pub fn resume(&mut self) {
+        self.status = SubAgentStatus::Running;
+        self.completed_at = None;
+        self.error_reason = None;
+    }
+}
+
+/// Apply a `<task-notification>` to the agent it names, once per notice.
+///
+/// Claude Code writes one hand-back up to three times (queue-operation
+/// enqueue and remove, queued_command attachment). The lead can resume the
+/// helper between the first copy and the others, so a later copy must not
+/// mark the resumed helper finished: copies already seen (same fingerprint)
+/// are skipped. `applied` is the caller's per-session set of seen notices.
+pub fn apply_task_notification_once(
+    agents: &mut [SubAgentInfo],
+    applied: &mut std::collections::HashSet<u64>,
+    notif: &crate::live_parser::SubAgentNotification,
+    at: Option<i64>,
+) {
+    let Some(agent) = agents
+        .iter_mut()
+        .find(|a| a.agent_id.as_deref() == Some(notif.agent_id.as_str()))
+    else {
+        return;
+    };
+    if applied.insert(notif.fingerprint) {
+        agent.apply_task_notification(&notif.status, at);
+    }
+}
+
+/// A SendMessage resumed the agent with this id (`toolUseResult.resumedAgentId`).
+pub fn resume_agent(agents: &mut [SubAgentInfo], agent_id: &str) {
+    if let Some(agent) = agents
+        .iter_mut()
+        .find(|a| a.agent_id.as_deref() == Some(agent_id))
+    {
+        agent.resume();
+    }
 }
 
 #[cfg(test)]

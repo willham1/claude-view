@@ -139,6 +139,9 @@ pub(crate) struct SessionAccumulator {
     pub accumulated_cost: CostBreakdown,
     /// Dedup guard for split assistant content blocks.
     pub seen_api_calls: HashSet<String>,
+    /// Fingerprints of `<task-notification>`s already applied, so the later
+    /// copies of one hand-back don't finish a helper the lead resumed.
+    pub applied_notices: HashSet<u64>,
     /// Sliding window of recent conversation turns for phase classification.
     pub message_buf: VecDeque<ConversationTurn>,
     /// Whether message_buf has new content since last classify request.
@@ -207,6 +210,7 @@ impl SessionAccumulator {
             slug: None,
             accumulated_cost: CostBreakdown::default(),
             seen_api_calls: HashSet::new(),
+            applied_notices: HashSet::new(),
             message_buf: VecDeque::new(),
             message_buf_dirty: false,
             message_buf_total: 0,

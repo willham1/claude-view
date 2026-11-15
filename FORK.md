@@ -163,9 +163,7 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
     - **"turns" is not your prompt count:** it is upstream's turn count, which with hooks off counts every user
       line in the transcript, tool results and task notices included, so it often sits close to the request
       count. The hover says so.
-    - **"helpers N running" can be too high:** it is the status the server reports, and some background helpers
-      are never marked finished, so an idle session can read "helpers 31 running". The Sub-Agents tab's bars
-      (change 9) show which are really working.
+    - **"helpers N running"** is the status the server reports; change 15 made it right for background helpers.
 
 14. **A card's cost is the session's total (LM7):** the figure at the top right of a Live Monitor card is now the
     main session plus its helpers, the same figure the session panel shows at its top right (list-price
@@ -180,6 +178,26 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
     Before, a Harness header showed the whole project's figure. The "cost" sort (of groups and in the List view)
     still uses the figure it used before.
     Until the first answer arrives (a moment after opening the page), a card shows the parent-reported figure.
+
+15. **Finished helpers show as finished (LM6):** Claude Code now usually writes a background helper's hand-back
+    (`<task-notification>`) as a queued command, a `queue-operation` line and a `queued_command` attachment line,
+    rather than as a user line, and upstream read only user lines. So almost every background helper stayed
+    "running" for good: one lead session with 28 helpers, 26 of them finished, showed "27 running, 1 done" on its
+    card and a green dot on every helper in the Sub-Agents tab. All three forms are read now. One hand-back is
+    written up to three times (enqueue, remove, attachment), byte-identical; only the first copy counts, so its
+    time is the finish time and a copy written after the lead has resumed the helper is ignored. A helper the lead
+    resumes with SendMessage (its result carries `resumedAgentId`) shows as running again until its next
+    hand-back, and a notice saying the helper "is waiting on its own background work" no longer counts as
+    finished (`live_parser/parse_line.rs`, `content.rs`, `subagent.rs`, `line_processor/sub_agents.rs`). The same
+    session now reads "2 running, 26 done", matching each helper's `meta.json`. The card's helpers line, the
+    Sub-Agents tab's strip, rows and dots all follow. How a session's own state or column is decided (change 11)
+    is unchanged.
+    What you will notice:
+    - **Ended sessions:** History's session detail and recently closed cards turn any helper still "running" when
+      the session ends into failed ("Session ended"). Before, that was nearly every background helper; now they
+      read done.
+    - **A helper that never reports back after "waiting on its own background work"** stays running until its
+      session closes (about 2 in 1,600 such notices in the owner's history); its `meta.json` may say finished.
 
 ## Running it
 

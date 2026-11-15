@@ -351,20 +351,17 @@ impl SessionAccumulator {
 
         // Background agent completion via <task-notification>
         if let Some(ref notif) = line.sub_agent_notification {
-            if let Some(agent) = self
-                .sub_agents
-                .iter_mut()
-                .find(|a| a.agent_id.as_deref() == Some(&notif.agent_id))
-            {
-                if notif.status == "completed" {
-                    agent.status = SubAgentStatus::Complete;
-                } else {
-                    agent.status = SubAgentStatus::Error;
-                    agent.error_reason = Some(notif.status.clone());
-                }
-                agent.completed_at = line.timestamp.as_deref().and_then(parse_timestamp_to_unix);
-                agent.current_activity = None;
-            }
+            crate::subagent::apply_task_notification_once(
+                &mut self.sub_agents,
+                &mut self.applied_notices,
+                notif,
+                line.timestamp.as_deref().and_then(parse_timestamp_to_unix),
+            );
+        }
+
+        // A SendMessage resumed a helper that had handed back: working again.
+        if let Some(ref id) = line.resumed_agent_id {
+            crate::subagent::resume_agent(&mut self.sub_agents, id);
         }
     }
 

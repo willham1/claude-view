@@ -42,7 +42,16 @@ export function MonitorGrid({
     return () => window.removeEventListener('resize', checkMobile)
   }, [])
 
+  // Fork (LM2): re-observe when the set of panes changes, not just their count, so
+  // a pane that replaces another is observed too (otherwise it stayed blank).
+  // Sorted, so re-ordering alone doesn't re-observe.
+  const paneIdsKey = sessions
+    .map((s) => s.id)
+    .sort()
+    .join(',')
+
   // IntersectionObserver to track which panes are visible
+  // biome-ignore lint/correctness/useExhaustiveDependencies: paneIdsKey triggers re-observing
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
@@ -72,7 +81,7 @@ export function MonitorGrid({
     panes.forEach((pane) => observer.observe(pane))
 
     return () => observer.disconnect()
-  }, [sessions.length, gridOverride, isMobile])
+  }, [paneIdsKey, gridOverride, isMobile])
 
   // Notify parent when visible panes change
   useEffect(() => {

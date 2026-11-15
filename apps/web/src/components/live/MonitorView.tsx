@@ -1,5 +1,5 @@
 import type { DockviewApi } from 'dockview-react'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useAutoLayout } from '../../hooks/use-auto-layout'
 import { usePaneZoom } from '../../hooks/use-pane-zoom'
@@ -14,7 +14,12 @@ import { LayoutPresets } from './LayoutPresets'
 import { MonitorGrid } from './MonitorGrid'
 import { MonitorPane } from './MonitorPane'
 import { PaneContextMenu } from './PaneContextMenu'
-import { EMPTY_PANE_MEMORY, type MonitorPaneMemory, orderMonitorPanes } from './monitor-pane-order'
+import {
+  EMPTY_PANE_MEMORY,
+  type MonitorPaneMemory,
+  autoGridCapacity,
+  orderMonitorPanes,
+} from './monitor-pane-order'
 import type { LiveSession } from './use-live-sessions'
 import { useAutoFill } from './useAutoFill'
 import { useMonitorKeyboardShortcuts } from './useMonitorKeyboardShortcuts'
@@ -110,14 +115,31 @@ export function MonitorView({ sessions, onSelectSession, onDockApiReady }: Monit
   // most recently active first via CSS `order` (see orderMonitorPanes).
   const paneMemoryRef = useRef<MonitorPaneMemory>(EMPTY_PANE_MEMORY)
 
+  // Size of the content area, for the auto grid's capacity
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 })
+  useEffect(() => {
+    const el = dockContainerRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect
+      setContainerSize((prev) =>
+        prev.width === width && prev.height === height ? prev : { width, height },
+      )
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
   // Calculate grid capacity — how many panes actually fit on screen
   const gridCapacity = useMemo(() => {
     if (gridOverride) return gridOverride.cols * gridOverride.rows
-    // Auto mode: conservative default based on typical screen sizes
-    // CSS grid uses minmax(480px, 1fr) cols and minmax(300px, 1fr) rows
-    // Most screens fit 2-3 cols × 2-3 rows = 4-9 panes
-    return 8
-  }, [gridOverride])
+    // Fork (LM2): in the auto grid, only as many panes as fit without clipping, so
+    // re-ordering by activity never pushes a pane past the visible edge (a pane out
+    // of view unmounts its terminal). Custom layouts, phones and unmeasured
+    // containers keep upstream's 8.
+    if (mode !== 'auto-grid' || window.innerWidth < 640) return 8
+    return autoGridCapacity(containerSize.width, containerSize.height) ?? 8
+  }, [gridOverride, mode, containerSize])
 
   // Filter out hidden sessions, order (manual "Move to front", then most recently
   // active) and limit to grid capacity

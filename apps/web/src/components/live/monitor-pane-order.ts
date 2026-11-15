@@ -21,6 +21,23 @@ export interface MonitorPaneOrder {
 
 export const EMPTY_PANE_MEMORY: MonitorPaneMemory = { stableOrder: [], shown: [] }
 
+/** MonitorGrid's auto layout: columns at least 480px, rows at least 300px, 4px gaps. */
+const MIN_PANE_WIDTH = 480
+const MIN_PANE_HEIGHT = 300
+const GRID_GAP = 4
+
+/**
+ * How many panes the auto grid shows without clipping any (its container hides
+ * overflow, and a pane out of view unmounts its terminal). At least one; `null`
+ * while the container hasn't been measured yet.
+ */
+export function autoGridCapacity(width: number, height: number): number | null {
+  if (width <= 0 || height <= 0) return null
+  const cols = Math.max(1, Math.floor((width + GRID_GAP) / (MIN_PANE_WIDTH + GRID_GAP)))
+  const rows = Math.max(1, Math.floor((height + GRID_GAP) / (MIN_PANE_HEIGHT + GRID_GAP)))
+  return cols * rows
+}
+
 /**
  * Orders the Monitor view's panes (fork, LM2): most recently active first, like the
  * Sub-Agents tab, with "Move to front" choices on top. At most `capacity` panes show.

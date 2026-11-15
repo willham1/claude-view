@@ -84,10 +84,16 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
     column, newest first, instead of upstream's cache-warmth / urgency order for Needs You and turn-start order for
     Running; with Project + Branch grouping, projects and branches come in order of their most recently active
     session and re-order live, where upstream froze them in first-seen order), Harness (Needs You sidebar) and
-    Monitor (auto-grid panes are placed with CSS `order`, so terminals aren't moved or re-mounted; a pane already
-    on screen keeps its slot, free slots go to the most recently active; "Move to front" still wins). The Board's
-    Sort control ("Last activity", "Alphabetical", "Highest cost") still works; Alphabetical and Highest cost order
-    the groups, cards in a column stay newest first. A Sort choice stored in the browser before this change is
+    Monitor (auto-grid panes keep their place in the page and are positioned with CSS `order`, so re-ordering
+    doesn't move a terminal in the page; the auto grid now shows only as many panes as fit without clipping,
+    measured from the window, instead of a fixed 8 of which those past the visible edge were blank, since an
+    off-screen pane unmounts its terminal; when there are more sessions than slots, a pane already shown keeps its
+    slot and free slots go to the most recently active; "Move to front" still wins; custom layouts and phones keep
+    8). The Board's Sort control ("Last activity", "Alphabetical", "Highest cost") still works; Alphabetical and
+    Highest cost order the groups, cards in a column stay newest first. Alphabetical no longer freezes groups either:
+    a project or branch that appears later goes into its alphabetical place (upstream added it at the bottom); Highest
+    cost keeps upstream's frozen order. Picking "last active" from the command palette starts newest first (it read
+    a stale or default address before). A Sort choice stored in the browser before this change is
     dropped once (marker `claude-view:kanban-sort-lm2` in localStorage), so the new default shows without clearing
     anything; later choices are kept (`live-filter.ts`, `use-kanban-grouping.ts`, `monitor-pane-order.ts`).
 

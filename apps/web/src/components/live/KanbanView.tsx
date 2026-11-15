@@ -4,7 +4,6 @@ import { formatRelativeTime } from '../../lib/format-utils'
 import { cn } from '../../lib/utils'
 import { BranchHeader, ProjectHeader } from './KanbanSwimLaneHeader'
 import { SessionCard } from './SessionCard'
-import { projectCostWithHelpers, useHelperCostMaps } from './helper-costs'
 import { sortByLastActivity } from './live-filter'
 import type { AgentStateGroup, KanbanGroupBy } from './types'
 import type { ProjectGroup } from './use-kanban-grouping'
@@ -457,8 +456,6 @@ function GroupedKanban({
   // Count totals for column headers
   const needsYouSessions = sessions.filter((s) => s.agentState.group === 'needs_you')
   const autonomousCount = sessions.filter((s) => s.agentState.group === 'autonomous').length
-  // Group header figure = sum of its cards' totals, helpers included (LM7).
-  const { costs: helperCosts, sidechains: helperSidechains } = useHelperCostMaps()
 
   // Build a merged view: projectGroups + closed sessions placed into matching swimlanes.
   // Closed sessions whose project/branch doesn't exist yet get their own swimlane rows.
@@ -568,7 +565,7 @@ function GroupedKanban({
               <ProjectHeader
                 projectName={project.projectName}
                 projectPath={project.projectPath}
-                totalCostUsd={projectCostWithHelpers(project, helperCosts, helperSidechains)}
+                totalCostUsd={project.totalCostUsd}
                 sessionCount={project.totalSessionCount}
                 isCollapsed={projCollapsed}
                 onToggle={() => toggleCollapse(projKey)}

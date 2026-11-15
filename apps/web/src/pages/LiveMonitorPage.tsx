@@ -19,7 +19,6 @@ import { SessionCard } from '../components/live/SessionCard'
 import { SessionDetailPanel } from '../components/live/SessionDetailPanel'
 import { TerminalOverlay } from '../components/live/TerminalOverlay'
 import { ViewModeSwitcher } from '../components/live/ViewModeSwitcher'
-import { useHelperCostPolling } from '../components/live/helper-costs'
 import { filterLiveSessions } from '../components/live/live-filter'
 import type { KanbanGroupBy, KanbanSort } from '../components/live/types'
 import type { LiveViewMode } from '../components/live/types'
@@ -74,9 +73,6 @@ export function LiveMonitorPage() {
   const recentlyClosed = useRecentlyClosed()
   const dismissSession = useLiveSessionStore((s) => s.dismissSession)
   const dismissAllClosed = useLiveSessionStore((s) => s.dismissAllClosed)
-  // Helper cost for the cards' totals (fork, LM7): one request for all sessions.
-  const costedSessions = useMemo(() => [...sessions, ...recentlyClosed], [sessions, recentlyClosed])
-  useHelperCostPolling(costedSessions)
 
   // Tick every ~1s for duration computation + stalled detection
   const [currentTime, setCurrentTime] = useState<number>(() => Math.floor(Date.now() / 1000))

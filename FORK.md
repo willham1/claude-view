@@ -157,27 +157,17 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
     request count (deduplicated by message + request id) from the transcript (`effort`, `startContextTokens`,
     `peakContextTokens`, `requestCount` on live sessions). Start and peak count from the server's start (it
     reads the whole transcript then), so peak spans compactions. A card from a server without these fields
-    leaves effort, requests, start and peak out (`SessionCardDetails.tsx`). Helper cost is in the card's
-    cost figure since change 14.
+    leaves effort, requests, start and peak out (`SessionCardDetails.tsx`). Helper cost is not on the card:
+    it needs each helper's transcript, which only the Sub-Agents tab fetches.
     What you will notice:
     - **"turns" is not your prompt count:** it is upstream's turn count, which with hooks off counts every user
       line in the transcript, tool results and task notices included, so it often sits close to the request
       count. The hover says so.
     - **"helpers N running"** is the status the server reports; change 15 made it right for background helpers.
 
-14. **A card's cost is the session's total (LM7):** the figure at the top right of a Live Monitor card is now the
-    main session plus its helpers, the same figure the session panel shows at its top right (list-price
-    equivalent; before, the card showed the main session alone for background helpers). Helpers are priced from
-    their own transcripts by the panel's rule (`helper-costs.ts`, used by both): each helper's transcript cost,
-    else what the parent transcript reported; team sessions count their member sidechains instead, never both.
-    The page fetches all of it in one request every 5 s, `GET /api/sessions/subagents/costs?ids=…` (sessions with
-    helpers only), which reuses change 2's per-file cache, so only transcripts that grew are read again. The
-    card's hover breakdown lists the same per-helper figures. A project group header shows the sum of the totals
-    of the cards under it: on the Board its active cards (not the recently closed ones, as its count); in Harness
-    only the cards in that phase group's rows (sessions in the Needs You sidebar are left out, as in its count).
-    Before, a Harness header showed the whole project's figure. The "cost" sort (of groups and in the List view)
-    still uses the figure it used before.
-    Until the first answer arrives (a moment after opening the page), a card shows the parent-reported figure.
+14. **(Rolled back.)** LM7 made a card's top-right cost the session total (main session plus helpers), PR #14.
+    The owner rolled it back on 2026-11-15: the main session's own share was no longer visible anywhere on the
+    card. The card again shows the main session's cost; the session panel's top right still shows the total.
 
 15. **Finished helpers show as finished (LM6):** Claude Code now usually writes a background helper's hand-back
     (`<task-notification>`) as a queued command, a `queue-operation` line and a `queued_command` attachment line,

@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
-import { HarnessPhaseRow } from './HarnessPhaseRow'
 import { BranchHeader, ProjectHeader } from './KanbanSwimLaneHeader'
+import { HarnessPhaseRow } from './HarnessPhaseRow'
 import {
   type PhaseColumn,
   getSessionPhase,
@@ -8,7 +8,6 @@ import {
   sortNeedsYouFirst,
   splitByPhase,
 } from './harness-phase-groups'
-import { projectCostWithHelpers, useHelperCostMaps } from './helper-costs'
 import type { ProjectGroup } from './use-kanban-grouping'
 import { branchCollapseKey, projectCollapseKey } from './use-kanban-grouping'
 import type { LiveSession } from './use-live-sessions'
@@ -46,8 +45,6 @@ export function HarnessGroupedContent({
   isCollapsed,
   toggleCollapse,
 }: GroupedContentProps) {
-  // Group header figure = sum of its cards' totals, helpers included (LM7).
-  const { costs: helperCosts, sidechains: helperSidechains } = useHelperCostMaps()
   // Filter project groups to only those with sessions in this phase group
   const relevantProjects = useMemo(() => {
     const result: { project: ProjectGroup; filteredBranches: FilteredBranch[] }[] = []
@@ -90,11 +87,7 @@ export function HarnessGroupedContent({
             <ProjectHeader
               projectName={project.projectName}
               projectPath={project.projectPath}
-              totalCostUsd={projectCostWithHelpers(
-                { branches: filteredBranches },
-                helperCosts,
-                helperSidechains,
-              )}
+              totalCostUsd={project.totalCostUsd}
               sessionCount={pCount}
               isCollapsed={pCollapsed}
               onToggle={() => toggleCollapse(pKey)}

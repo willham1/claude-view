@@ -1520,59 +1520,116 @@ fn test_collect_session_pids_from_map() {
     assert_eq!(pids, vec![1234, 5678]);
 }
 
-#[test]
-fn test_session_found_at_startup_follows_older_transcript() {
-    // Fork change 12 (LM3): a session found at server start gets its last
-    // activity from its transcript, even when the transcript is older than the
-    // process start and much older than the discovery time.
-    use crate::live::coordinator::dispatch::common_post_mutation;
-    use crate::live::coordinator::session_factory::create_session_from_birth;
+/// Fork change 12 (LM3) helper: run a pid.json Birth through the real
+/// coordinator pipeline (Phase 1b `process_jsonl_update` ->
+/// `apply_accumulator_to_session` -> post-mutation) with a real manager.
+async fn lm3_birth_through_coordinator(
+    manager: &std::sync::Arc<super::LiveSessionManager>,
+    session_id: &str,
+    started_at_ms: i64,
+    transcript: Option<&std::path::Path>,
+) -> LiveSession {
     use crate::live::mutation::types::SessionMutation;
-
-    let discovered_at = 1_700_086_400; // server start
     let active = claude_view_core::session_files::ActiveSession {
         pid: 4242,
-        session_id: "lm3-transcript".to_string(),
+        session_id: session_id.to_string(),
         cwd: "/tmp/lm3-project".to_string(),
-        started_at: 1_700_000_000_000,
+        started_at: started_at_ms,
         kind: "interactive".to_string(),
         entrypoint: "cli".to_string(),
         name: None,
     };
-    let mut session = create_session_from_birth(&active, discovered_at);
+    let tp = transcript.map(|p| p.to_string_lossy().to_string());
+    let ctx = manager.mutation_context(manager);
+    manager
+        .coordinator
+        .handle(
+            &ctx,
+            session_id,
+            SessionMutation::Birth(active),
+            Some(4242),
+            super::helpers::unix_now(),
+            None,
+            Some("/tmp/lm3-project"),
+            tp.as_deref(),
+            None,
+        )
+        .await;
+    manager
+        .sessions
+        .read()
+        .await
+        .get(session_id)
+        .cloned()
+        .expect("Birth creates the session")
+}
 
-    // Coordinator order: factory -> apply_accumulator_to_session (transcript
-    // mtime via apply_jsonl_metadata) -> common post-mutation bookkeeping.
-    let mut meta = minimal_jsonl_metadata();
-    meta.last_activity_at = 1_699_990_000; // transcript last written before the restart
-    apply_jsonl_metadata(
-        &mut session,
-        &meta,
-        "/tmp/lm3.jsonl",
-        "proj",
-        "proj",
-        "/tmp/proj",
-    );
-    let post = common_post_mutation(&SessionMutation::Birth(active), Some(4242), discovered_at);
-    if let Some(at) = post.update_activity_at {
-        session.hook.last_activity_at = at;
-    }
-    assert_eq!(session.hook.last_activity_at, 1_699_990_000);
+fn lm3_set_mtime(path: &std::path::Path, unix_secs: i64) {
+    let t = UNIX_EPOCH + std::time::Duration::from_secs(unix_secs as u64);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(t)
+        .unwrap();
+}
 
-    // A later enrich keeps the later of hook time and transcript time
-    // (enrich_session_in_map); a newer transcript write moves it forward.
-    let hook_activity = session.hook.last_activity_at;
-    meta.last_activity_at = 1_700_090_000;
-    apply_jsonl_metadata(
-        &mut session,
-        &meta,
-        "/tmp/lm3.jsonl",
-        "proj",
-        "proj",
-        "/tmp/proj",
+#[tokio::test]
+async fn test_session_found_at_startup_follows_older_transcript() {
+    // A session found at server start (now) whose transcript was last written
+    // a day ago: its last activity is the transcript's time, not now.
+    use std::io::Write;
+    let tmp = tempfile::tempdir().unwrap();
+    let jsonl = tmp.path().join("lm3-old.jsonl");
+    let mut f = std::fs::File::create(&jsonl).unwrap();
+    writeln!(
+        f,
+        r#"{{"type":"user","message":{{"role":"user","content":"hello"}}}}"#
+    )
+    .unwrap();
+    f.flush().unwrap();
+    drop(f);
+    let written_at = super::helpers::unix_now() - 86_400;
+    lm3_set_mtime(&jsonl, written_at);
+    let started_ms = (written_at - 3_600) * 1000; // process started an hour before that
+
+    let (manager, _rx, _snap) = super::reaper::tests::make_test_manager().await;
+    let s = lm3_birth_through_coordinator(&manager, "lm3-old", started_ms, Some(&jsonl)).await;
+    assert_eq!(
+        s.hook.last_activity_at, written_at,
+        "last activity must follow the transcript, not the discovery time"
     );
-    if hook_activity > session.hook.last_activity_at {
-        session.hook.last_activity_at = hook_activity;
-    }
-    assert_eq!(session.hook.last_activity_at, 1_700_090_000);
+
+    // A new transcript write moves it forward to the new mtime.
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&jsonl)
+        .unwrap();
+    writeln!(
+        f,
+        r#"{{"type":"user","message":{{"role":"user","content":"again"}}}}"#
+    )
+    .unwrap();
+    f.flush().unwrap();
+    drop(f);
+    let rewritten_at = written_at + 600;
+    lm3_set_mtime(&jsonl, rewritten_at);
+    manager.process_jsonl_update(&jsonl).await;
+    let s = manager
+        .sessions
+        .read()
+        .await
+        .get("lm3-old")
+        .cloned()
+        .unwrap();
+    assert_eq!(s.hook.last_activity_at, rewritten_at);
+}
+
+#[tokio::test]
+async fn test_session_found_without_transcript_uses_process_start() {
+    // No transcript yet (session opened, nothing typed): process start time.
+    let started_secs = super::helpers::unix_now() - 7_200;
+    let (manager, _rx, _snap) = super::reaper::tests::make_test_manager().await;
+    let s = lm3_birth_through_coordinator(&manager, "lm3-none", started_secs * 1000, None).await;
+    assert_eq!(s.hook.last_activity_at, started_secs);
 }

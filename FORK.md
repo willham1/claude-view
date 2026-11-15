@@ -137,8 +137,9 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
       chimes) for those seconds, then goes back to Running. Seen twice in 14 days of the owner's transcripts.
 
 12. **Last activity follows the transcript after a restart (LM3):** upstream stamped the discovery time as a live
-    session's last activity whenever it found the session (its `sessions/<pid>.json`), and the later-of rule on
-    each transcript read then kept that time. So after a server restart every session not written to since showed
+    session's last activity whenever it found the session (its `sessions/<pid>.json`), overwriting the transcript
+    time it had just read, and nothing replaced it until the transcript was next written (an unchanged transcript
+    is not re-read). So after a server restart every session not written to since showed
     the restart time ("8m ago" for all of them) and the last-activity sort (change 10) was arbitrary. Finding a
     session is no longer counted as activity: it starts at its transcript's modification time, or the process
     start time when it has no transcript yet (`coordinator/dispatch.rs`, `session_factory.rs`). Hooks still count

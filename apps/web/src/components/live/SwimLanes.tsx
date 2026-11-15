@@ -183,18 +183,92 @@ function StatusDot({ status }: { status: SubAgentInfo['status'] }) {
   return <div className={cn('w-2 h-2 rounded-full flex-shrink-0', colorClass)} />
 }
 
-/** Animated indeterminate progress bar for running agents */
-function ProgressBar() {
+/** A helper counts as actively working when its latest request is this recent. */
+export const ACTIVE_WINDOW_SECONDS = 120
+
+export type SubAgentActivity = 'active' | 'idle' | 'expired' | 'unknown'
+
+/**
+ * What a running helper is doing, from its transcript's latest request:
+ * active (a request in the last 2 minutes), idle (quiet, but its prompt cache
+ * is still warm), expired (cache gone: it is not really working any more), or
+ * unknown (no transcript data yet).
+ */
+export function subAgentActivity(ctx: SubAgentContext | undefined, now: number): SubAgentActivity {
+  const last = ctx?.lastActivityAt
+  if (ctx == null || last == null || last <= 0) return 'unknown'
+  if (cacheRemainingSeconds(last, effectiveCacheTtl(ctx.cacheTtlSeconds), now) <= 0)
+    return 'expired'
+  return now - last <= ACTIVE_WINDOW_SECONDS ? 'active' : 'idle'
+}
+
+const ACTIVITY_TITLE: Record<SubAgentActivity, string> = {
+  active: 'Working: its latest request finished under 2 minutes ago',
+  idle: 'Quiet: no request has finished for over 2 minutes (it may be on a long command). Its prompt cache is still warm',
+  expired: 'Stalled: no request has finished since its prompt cache expired',
+  unknown: 'Running',
+}
+
+/** Fill colour per state. Light-mode shades are picked to stand out from the gray-200 track. */
+const ACTIVITY_FILL: Record<SubAgentActivity, string> = {
+  active: 'bg-blue-600 dark:bg-blue-500',
+  unknown: 'bg-blue-600 dark:bg-blue-500',
+  idle: 'bg-amber-600 dark:bg-yellow-500',
+  expired: 'bg-gray-500',
+}
+
+/**
+ * Progress bar for running agents. Blue = actively working, yellow = idle.
+ * It moves only while the helper's prompt cache is warm; once expired it
+ * stands still.
+ */
+function ProgressBar({ activity }: { activity: SubAgentActivity }) {
+  const moving = activity !== 'expired'
   return (
-    <div className="w-full h-1 bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden">
-      <div
-        className="h-full bg-blue-500 rounded-full"
-        style={{
-          animation: 'swimlane-progress 1.5s ease-in-out infinite',
-        }}
-      />
+    // The padding makes the hover target taller than the 4px track.
+    <div
+      className="w-full py-1.5"
+      title={ACTIVITY_TITLE[activity]}
+      data-testid="subagent-progress"
+      data-activity={activity}
+    >
+      <div className="w-full h-1 bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden">
+        <div
+          className={cn('h-full rounded-full', ACTIVITY_FILL[activity], !moving && 'w-full')}
+          style={moving ? { animation: 'swimlane-progress 1.5s ease-in-out infinite' } : undefined}
+          data-testid="subagent-progress-fill"
+        />
+      </div>
     </div>
   )
+}
+
+/** Text colour per helper type, so builders, reviewers and searches stand apart at a glance. */
+const AGENT_TYPE_COLORS: Record<string, string> = {
+  builder: 'text-sky-700 dark:text-sky-400',
+  'builder-browser': 'text-cyan-700 dark:text-cyan-400',
+  reviewer: 'text-violet-700 dark:text-violet-400',
+  'senior-reviewer': 'text-fuchsia-700 dark:text-fuchsia-400',
+  explore: 'text-emerald-700 dark:text-emerald-400',
+  'general-purpose': 'text-orange-700 dark:text-orange-400',
+  plan: 'text-amber-700 dark:text-amber-400',
+  'web-fetch': 'text-teal-700 dark:text-teal-400',
+}
+const FALLBACK_TYPE_COLORS = [
+  // No red or rose here: they read as the error tag.
+  'text-stone-600 dark:text-stone-300',
+  'text-lime-700 dark:text-lime-400',
+  'text-indigo-700 dark:text-indigo-400',
+  'text-pink-700 dark:text-pink-400',
+]
+
+export function agentTypeColor(agentType: string): string {
+  const key = agentType.trim().toLowerCase()
+  const known = AGENT_TYPE_COLORS[key]
+  if (known) return known
+  let h = 0
+  for (const ch of key) h = (h * 31 + ch.charCodeAt(0)) >>> 0
+  return FALLBACK_TYPE_COLORS[h % FALLBACK_TYPE_COLORS.length]
 }
 
 /**
@@ -215,6 +289,7 @@ function ProgressBar() {
  * transcripts update.
  */
 export function SwimLanes({ subAgents, onDrillDown, contexts }: SwimLanesProps) {
+  const now = useNowSeconds(subAgents.some((a) => a.status === 'running'))
   const sortedAgents = useMemo(
     () => sortSubAgentsByLastActive(subAgents, contexts),
     [subAgents, contexts],
@@ -254,6 +329,7 @@ export function SwimLanes({ subAgents, onDrillDown, contexts }: SwimLanesProps) 
         const canDrillDown = !!agent.agentId && !!onDrillDown
         const ctx = findSubAgentContext(agent, contexts)
         const cost = subAgentCostUsd(agent, contexts)
+        const activity = subAgentActivity(ctx, now)
         const open = () => {
           if (agent.agentId) onDrillDown?.(agent.agentId, agent.agentType, agent.description)
         }
@@ -280,7 +356,13 @@ export function SwimLanes({ subAgents, onDrillDown, contexts }: SwimLanesProps) 
               <span className="pt-1.5">
                 <StatusDot status={agent.status} />
               </span>
-              <span className="text-xs font-mono text-gray-500 dark:text-gray-400 uppercase tracking-wide flex-shrink-0 pt-0.5">
+              <span
+                className={cn(
+                  'text-xs font-mono font-semibold uppercase tracking-wide flex-shrink-0 pt-0.5',
+                  agentTypeColor(agent.agentType),
+                )}
+                data-testid="subagent-type"
+              >
                 {agent.agentType}
               </span>
               {/* Selectable title: clicks here never open the helper. */}
@@ -317,12 +399,24 @@ export function SwimLanes({ subAgents, onDrillDown, contexts }: SwimLanesProps) 
             {agent.status === 'running' ? (
               <div className="pl-4 flex items-center gap-2">
                 {agent.currentActivity ? (
-                  <span className="text-xs font-mono text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 dark:bg-blue-400 animate-pulse" />
+                  <span
+                    className="text-xs font-mono text-blue-600 dark:text-blue-400 flex items-center gap-1.5"
+                    title={ACTIVITY_TITLE[activity]}
+                  >
+                    {/* Same colours as the bar: blue working, yellow quiet, grey and still once expired. */}
+                    <span
+                      className={cn(
+                        'inline-block w-1.5 h-1.5 rounded-full',
+                        ACTIVITY_FILL[activity],
+                        activity !== 'expired' && 'animate-pulse',
+                      )}
+                      data-testid="subagent-activity-dot"
+                      data-activity={activity}
+                    />
                     {agent.currentActivity}
                   </span>
                 ) : (
-                  <ProgressBar />
+                  <ProgressBar activity={activity} />
                 )}
                 {cost != null && (
                   <span

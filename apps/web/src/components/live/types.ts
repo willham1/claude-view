@@ -60,5 +60,11 @@ export type KanbanSort = 'recent' | 'alphabetical' | 'cost'
 
 export const KANBAN_GROUP_BY_STORAGE_KEY = 'claude-view:kanban-group-by'
 export const KANBAN_SORT_STORAGE_KEY = 'claude-view:kanban-sort'
+/**
+ * Fork (LM2): set once the stored Sort choice has been reset to the new default
+ * ('recent', live last-activity order), so a choice saved before that change
+ * doesn't keep the old order. Later choices are kept as usual.
+ */
+export const KANBAN_SORT_DEFAULT_MIGRATED_KEY = 'claude-view:kanban-sort-lm2'
 export const KANBAN_COLLAPSE_STORAGE_KEY = 'claude-view:kanban-collapse'
 export const KANBAN_SHOW_CLOSED_STORAGE_KEY = 'claude-view:kanban-show-closed'

@@ -78,6 +78,34 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
    so a helper on one long command can show yellow, or even grey, while still busy
    (`subAgentActivity`, `agentTypeColor` in `SwimLanes.tsx`).
 
+10. **Live Monitor sorts by last activity (LM2):** like the Sub-Agents tab, sessions show most recently active
+    first and re-order live, by default in every view: Grid (the page's default sort is now "last active, newest
+    first"), List (starts on the Last Active column, newest first; other column headers still sort), Board (each
+    column, newest first, instead of upstream's cache-warmth / urgency order for Needs You and turn-start order for
+    Running; with Project + Branch grouping, projects and branches come in order of their most recently active
+    session and re-order live, where upstream froze them in first-seen order), Harness (Needs You sidebar) and
+    Monitor (auto-grid panes keep their place in the page and are positioned with CSS `order`, so re-ordering
+    doesn't move a terminal in the page; the auto grid now shows only as many panes as fit uncut, measured from
+    the window, instead of a fixed 8 that ran past the bottom edge (an off-screen pane unmounts its terminal):
+    at most 2 columns (the page is at most 1280px wide, panes at least 480px) and one row per ~304px of height, so
+    a laptop window usually gets 2 or 4 panes where it showed 3–4 before, the last ones cut off; with more
+    sessions than slots, the most recently active fill free slots, and a busier session takes the slot of the
+    quietest pane on screen only once that pane's transcript has had no new line for 5 minutes, so panes don't
+    trade places on every line written (upstream's auto-fill instead counts from when a session started waiting,
+    and only in a fixed grid); a session busy on one long silent command (a build or test run over 5 minutes)
+    counts as quiet and can lose its pane; selecting a pane, or arriving from History with `?focus=`, doesn't
+    protect it; a session waiting on you stays for those 5 minutes too; only the leaving
+    pane's terminal unmounts; pinned and "Move to front" panes are never swapped out; hiding a pane frees a slot;
+    custom (dock) layouts and phones keep 8, and custom layouts never swap: their panels change only when a
+    session ends, as upstream). The Board's Sort control ("Last activity", "Alphabetical", "Highest cost") still
+    works; Alphabetical and
+    Highest cost order the groups, cards in a column stay newest first. Alphabetical no longer freezes groups either:
+    a project or branch that appears later goes into its alphabetical place (upstream added it at the bottom); Highest
+    cost keeps upstream's frozen order. Picking "last active" from the command palette starts newest first (it read
+    a stale or default address before). A Sort choice stored in the browser before this change is
+    dropped once (marker `claude-view:kanban-sort-lm2` in localStorage), so the new default shows without clearing
+    anything; later choices are kept (`live-filter.ts`, `use-kanban-grouping.ts`, `monitor-pane-order.ts`).
+
 ## Running it
 
 - Launcher scripts are in `fork/launcher/` and find the repo from their own location. They run read-only:

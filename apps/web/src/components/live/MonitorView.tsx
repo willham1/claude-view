@@ -1,10 +1,12 @@
 import type { DockviewApi } from 'dockview-react'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useAutoLayout } from '../../hooks/use-auto-layout'
 import { usePaneZoom } from '../../hooks/use-pane-zoom'
 import { useDockLayoutStore } from '../../store/dock-layout-store'
-import { useShallow } from 'zustand/react/shallow'
 import { useMonitorStore } from '../../store/monitor-store'
+import { CliTerminal } from '../cli-terminal/CliTerminal'
+import { BlockTerminalPane } from './BlockTerminalPane'
 import { DockLayout } from './DockLayout'
 import { GridControls } from './GridControls'
 import { LayoutModeToggle } from './LayoutModeToggle'
@@ -12,8 +14,12 @@ import { LayoutPresets } from './LayoutPresets'
 import { MonitorGrid } from './MonitorGrid'
 import { MonitorPane } from './MonitorPane'
 import { PaneContextMenu } from './PaneContextMenu'
-import { BlockTerminalPane } from './BlockTerminalPane'
-import { CliTerminal } from '../cli-terminal/CliTerminal'
+import {
+  EMPTY_PANE_MEMORY,
+  type MonitorPaneMemory,
+  autoGridCapacity,
+  orderMonitorPanes,
+} from './monitor-pane-order'
 import type { LiveSession } from './use-live-sessions'
 import { useAutoFill } from './useAutoFill'
 import { useMonitorKeyboardShortcuts } from './useMonitorKeyboardShortcuts'
@@ -103,51 +109,51 @@ export function MonitorView({ sessions, onSelectSession, onDockApiReady }: Monit
   // Custom session ordering for "Move to front"
   const [sessionOrder, setSessionOrder] = useState<string[]>([])
 
-  // Stable pane ordering — tracks first-seen order of session IDs.
-  // The upstream `sessions` array is sorted by lastActivityAt (most recently active
-  // first), which is correct for list/grid views but causes constant pane shuffling
-  // in monitor view. Each shuffle repositions DOM nodes, causing xterm terminals to
-  // flicker and potentially lose scroll state. This ref preserves insertion order:
-  // existing sessions keep their position, new sessions are appended at the end.
-  const stableOrderRef = useRef<string[]>([])
+  // First-seen order of session IDs and the panes shown last time. Panes are rendered
+  // in first-seen order so live re-ordering never repositions DOM nodes (which made
+  // xterm terminals flicker and lose scroll state); fork (LM2): they are *displayed*
+  // most recently active first via CSS `order` (see orderMonitorPanes).
+  const paneMemoryRef = useRef<MonitorPaneMemory>(EMPTY_PANE_MEMORY)
+
+  // Size of the content area, for the auto grid's capacity
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 })
+  useEffect(() => {
+    const el = dockContainerRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect
+      setContainerSize((prev) =>
+        prev.width === width && prev.height === height ? prev : { width, height },
+      )
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   // Calculate grid capacity — how many panes actually fit on screen
   const gridCapacity = useMemo(() => {
     if (gridOverride) return gridOverride.cols * gridOverride.rows
-    // Auto mode: conservative default based on typical screen sizes
-    // CSS grid uses minmax(480px, 1fr) cols and minmax(300px, 1fr) rows
-    // Most screens fit 2-3 cols × 2-3 rows = 4-9 panes
-    return 8
-  }, [gridOverride])
+    // Fork (LM2): in the auto grid, only as many panes as fit without clipping, so
+    // re-ordering by activity never pushes a pane past the visible edge (a pane out
+    // of view unmounts its terminal). Custom layouts, phones and unmeasured
+    // containers keep upstream's 8.
+    if (mode !== 'auto-grid' || window.innerWidth < 640) return 8
+    return autoGridCapacity(containerSize.width, containerSize.height) ?? 8
+  }, [gridOverride, mode, containerSize])
 
-  // Filter out hidden sessions, apply stable ordering, and limit to grid capacity
-  const visibleSessions = useMemo(() => {
+  // Filter out hidden sessions, order (manual "Move to front", then most recently
+  // active) and limit to grid capacity
+  const paneOrder = useMemo(() => {
     const filtered = sessions.filter((s) => !hiddenPaneIds.has(s.id))
-    const currentIds = new Set(filtered.map((s) => s.id))
-
-    // Maintain stable order: prune departed sessions, append newly seen ones
-    const kept = stableOrderRef.current.filter((id) => currentIds.has(id))
-    const keptSet = new Set(kept)
-    for (const s of filtered) {
-      if (!keptSet.has(s.id)) kept.push(s.id)
-    }
-    stableOrderRef.current = kept
-
-    // Layer manual "Move to front" ordering on top of stable base
-    let order = kept
-    if (sessionOrder.length > 0) {
-      const manualSet = new Set(sessionOrder)
-      const manual = sessionOrder.filter((id) => currentIds.has(id))
-      const rest = kept.filter((id) => !manualSet.has(id))
-      order = [...manual, ...rest]
-    }
-
-    // Sort filtered sessions by their position in the computed order
-    const posMap = new Map(order.map((id, i) => [id, i]))
-    return [...filtered]
-      .sort((a, b) => (posMap.get(a.id) ?? 0) - (posMap.get(b.id) ?? 0))
-      .slice(0, gridCapacity)
-  }, [sessions, hiddenPaneIds, sessionOrder, gridCapacity])
+    const order = orderMonitorPanes(filtered, sessionOrder, paneMemoryRef.current, gridCapacity, {
+      pinned: pinnedPaneIds,
+      // Custom (dock) layouts keep their panels until a session ends, as upstream
+      swap: mode === 'auto-grid',
+    })
+    paneMemoryRef.current = order.next
+    return order
+  }, [sessions, hiddenPaneIds, sessionOrder, gridCapacity, pinnedPaneIds, mode])
+  const visibleSessions = paneOrder.ranked
 
   // Auto-fill: auto-show new sessions and swap idle ones out
   useAutoFill({ sessions, enabled: true })
@@ -351,12 +357,16 @@ export function MonitorView({ sessions, onSelectSession, onDockApiReady }: Monit
             compactHeaders={compactHeaders}
             onVisibilityChange={setVisiblePanes}
           >
-            {visibleSessions.map((session) => {
+            {paneOrder.domOrder.map((session) => {
               const isPinned = pinnedPaneIds.has(session.id)
               const isPaneVisible = visiblePanes.size === 0 || visiblePanes.has(session.id)
 
               return (
-                <div key={session.id} data-pane-id={session.id}>
+                <div
+                  key={session.id}
+                  data-pane-id={session.id}
+                  style={{ order: paneOrder.rank.get(session.id) ?? 0 }}
+                >
                   <MonitorPane
                     session={session}
                     isSelected={selectedPaneId === session.id}

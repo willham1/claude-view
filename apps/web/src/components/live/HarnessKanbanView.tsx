@@ -6,12 +6,12 @@ import { HarnessNeedsYouSidebar } from './HarnessNeedsYouSidebar'
 import { HarnessPhaseColumnHeaders, HarnessPhaseRow } from './HarnessPhaseRow'
 import {
   PHASE_GROUPS,
+  type PhaseColumn,
   getSessionPhase,
   isDesignPhase,
   splitByPhase,
-  type PhaseColumn,
 } from './harness-phase-groups'
-import { needsYouSortKey } from './KanbanView'
+import { sortByLastActivity } from './live-filter'
 import type { KanbanGroupBy } from './types'
 import type { ProjectGroup } from './use-kanban-grouping'
 import type { LiveSession } from './use-live-sessions'
@@ -42,19 +42,9 @@ export function HarnessKanbanView({
   toggleCollapse,
 }: HarnessKanbanViewProps) {
   // Split into needs_you (sidebar) vs autonomous (phase pipeline)
+  // Fork (LM2): most recently active first, like the Board's columns.
   const needsYou = useMemo(
-    () =>
-      sessions
-        .filter((s) => s.agentState.group === 'needs_you')
-        .sort((a, b) => {
-          const cacheRank = (s: LiveSession) =>
-            s.cacheStatus === 'warm' ? 0 : s.cacheStatus === 'unknown' ? 1 : 2
-          const cacheDiff = cacheRank(a) - cacheRank(b)
-          if (cacheDiff !== 0) return cacheDiff
-          const keyDiff = needsYouSortKey(a) - needsYouSortKey(b)
-          if (keyDiff !== 0) return keyDiff
-          return b.lastActivityAt - a.lastActivityAt
-        }),
+    () => sortByLastActivity(sessions.filter((s) => s.agentState.group === 'needs_you')),
     [sessions],
   )
 
@@ -86,40 +76,40 @@ export function HarnessKanbanView({
       </div>
 
       <div className="flex flex-1 min-h-0 gap-4">
-      {/* Left sidebar -- needs_you sessions */}
-      <div
-        className={cn(
-          'shrink-0 flex flex-col min-h-0 transition-all duration-200',
-          hasNeedsYou ? 'w-72' : 'w-10',
-        )}
-      >
-        <HarnessNeedsYouSidebar
-          sessions={needsYou}
-          collapsed={!hasNeedsYou}
-          selectedId={selectedId}
-          onSelect={onSelect}
-          stalledSessions={stalledSessions}
-          currentTime={currentTime}
-          onCardClick={onCardClick}
-        />
-      </div>
+        {/* Left sidebar -- needs_you sessions */}
+        <div
+          className={cn(
+            'shrink-0 flex flex-col min-h-0 transition-all duration-200',
+            hasNeedsYou ? 'w-72' : 'w-10',
+          )}
+        >
+          <HarnessNeedsYouSidebar
+            sessions={needsYou}
+            collapsed={!hasNeedsYou}
+            selectedId={selectedId}
+            onSelect={onSelect}
+            stalledSessions={stalledSessions}
+            currentTime={currentTime}
+            onCardClick={onCardClick}
+          />
+        </div>
 
-      {/* Right -- phase pipeline (autonomous sessions only) */}
-      <div className="flex-1 min-w-0 min-h-0 overflow-y-auto pb-4">
-        <PhasePipeline
-          sessions={autonomous}
-          excludeIds={needsYouIds}
-          groupBy={groupBy}
-          projectGroups={projectGroups}
-          selectedId={selectedId}
-          onSelect={onSelect}
-          stalledSessions={stalledSessions}
-          currentTime={currentTime}
-          onCardClick={onCardClick}
-          isCollapsed={isCollapsed}
-          toggleCollapse={toggleCollapse}
-        />
-      </div>
+        {/* Right -- phase pipeline (autonomous sessions only) */}
+        <div className="flex-1 min-w-0 min-h-0 overflow-y-auto pb-4">
+          <PhasePipeline
+            sessions={autonomous}
+            excludeIds={needsYouIds}
+            groupBy={groupBy}
+            projectGroups={projectGroups}
+            selectedId={selectedId}
+            onSelect={onSelect}
+            stalledSessions={stalledSessions}
+            currentTime={currentTime}
+            onCardClick={onCardClick}
+            isCollapsed={isCollapsed}
+            toggleCollapse={toggleCollapse}
+          />
+        </div>
       </div>
     </div>
   )
@@ -182,14 +172,21 @@ function PhasePipeline({
         return (
           <div key={group.id} className="rounded-lg border border-gray-200 dark:border-gray-800">
             {/* Sticky group header + phase columns */}
-            <div className={cn('sticky top-0 z-10 bg-white dark:bg-gray-950', groupCollapsed ? 'rounded-lg' : 'rounded-t-lg')}>
+            <div
+              className={cn(
+                'sticky top-0 z-10 bg-white dark:bg-gray-950',
+                groupCollapsed ? 'rounded-lg' : 'rounded-t-lg',
+              )}
+            >
               {/* Group header — clickable to collapse */}
               <button
                 type="button"
                 onClick={() => toggleCollapse(groupKey)}
                 className={cn(
                   'w-full px-4 py-2.5 flex items-center gap-2 bg-gray-50/50 dark:bg-gray-900/50 cursor-pointer hover:bg-gray-100/50 dark:hover:bg-gray-800/50 transition-colors',
-                  groupCollapsed ? 'rounded-lg' : 'rounded-t-lg border-b border-gray-200 dark:border-gray-800',
+                  groupCollapsed
+                    ? 'rounded-lg'
+                    : 'rounded-t-lg border-b border-gray-200 dark:border-gray-800',
                 )}
               >
                 <Chevron className="size-3.5 text-gray-400 dark:text-gray-500 shrink-0" />

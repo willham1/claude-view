@@ -7,6 +7,8 @@ import {
   SubAgentCacheTimer,
   SubAgentContextRow,
   SwimLanes,
+  agentTypeColor,
+  subAgentActivity,
   subAgentModelLabel,
   subAgentWindowSize,
 } from './SwimLanes'
@@ -575,5 +577,57 @@ describe('SubAgentCacheTimer', () => {
   it('is left out when the latest request time is unknown', () => {
     render(<SubAgentContextRow ctx={base} />)
     expect(screen.queryByTestId('subagent-cache')).toBeNull()
+  })
+})
+
+describe('subAgentActivity and the progress bar', () => {
+  const now = 1_000_000
+  const ctx = (lastActivityAt: number): SubAgentContext => ({
+    agentId: 'abc1234',
+    requestCount: 3,
+    startContextTokens: 1000,
+    currentContextTokens: 2000,
+    peakContextTokens: 2000,
+    lastActivityAt,
+    cacheTtlSeconds: 3600,
+  })
+
+  it('is active within 2 minutes, idle while the cache is warm, expired after', () => {
+    expect(subAgentActivity(ctx(now - 30), now)).toBe('active')
+    expect(subAgentActivity(ctx(now - 600), now)).toBe('idle')
+    expect(subAgentActivity(ctx(now - 4000), now)).toBe('expired')
+    expect(subAgentActivity(undefined, now)).toBe('unknown')
+  })
+
+  it('stops the bar animation once the cache has expired', () => {
+    const t = Math.floor(Date.now() / 1000)
+    const agents = [
+      makeSubAgent({ toolUseId: 't1', agentId: 'live1234' }),
+      makeSubAgent({ toolUseId: 't2', agentId: 'idle1234' }),
+      makeSubAgent({ toolUseId: 't3', agentId: 'dead1234' }),
+    ]
+    const contexts = [
+      { ...ctx(t - 10), agentId: 'live1234' },
+      { ...ctx(t - 900), agentId: 'idle1234' },
+      { ...ctx(t - 5000), agentId: 'dead1234' },
+    ]
+    render(<SwimLanes subAgents={agents} contexts={contexts} />)
+    const bars = screen.getAllByTestId('subagent-progress')
+    const byActivity = Object.fromEntries(
+      bars.map((b) => [b.dataset.activity, b.firstElementChild as HTMLElement]),
+    )
+    expect(byActivity.active.className).toContain('bg-blue-500')
+    expect(byActivity.active.style.animation).toContain('swimlane-progress')
+    expect(byActivity.idle.className).toContain('bg-yellow-500')
+    expect(byActivity.idle.style.animation).toContain('swimlane-progress')
+    expect(byActivity.expired.style.animation).toBe('')
+  })
+})
+
+describe('agentTypeColor', () => {
+  it('gives builders and reviewers different colours, stable for unknown types', () => {
+    expect(agentTypeColor('builder')).not.toBe(agentTypeColor('reviewer'))
+    expect(agentTypeColor('Explore')).toContain('emerald')
+    expect(agentTypeColor('custom-x')).toBe(agentTypeColor('custom-x'))
   })
 })

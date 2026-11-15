@@ -69,6 +69,12 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
    "Running …" for the call in progress; re-read every 3 s while the helper runs
    (`apps/web/src/lib/subagent-progress.ts`, `SubAgentProgressView.tsx`).
 
+9. **Sub-Agents tab, at a glance:** each helper's type label has its own colour (builder sky, builder-browser cyan,
+   reviewer violet, senior-reviewer fuchsia, Explore emerald; others get a stable colour from the name). A running
+   helper's bar now means something: **blue** = its latest request was under 2 minutes ago (working), **yellow** =
+   quiet for longer but its prompt cache is still warm (idle); the bar (and the activity dot) stops moving once the
+   cache has expired (`subAgentActivity`, `agentTypeColor` in `SwimLanes.tsx`).
+
 ## Running it
 
 - Launcher scripts are in `fork/launcher/` and find the repo from their own location. They run read-only:

@@ -145,10 +145,14 @@ export function MonitorView({ sessions, onSelectSession, onDockApiReady }: Monit
   // active) and limit to grid capacity
   const paneOrder = useMemo(() => {
     const filtered = sessions.filter((s) => !hiddenPaneIds.has(s.id))
-    const order = orderMonitorPanes(filtered, sessionOrder, paneMemoryRef.current, gridCapacity)
+    const order = orderMonitorPanes(filtered, sessionOrder, paneMemoryRef.current, gridCapacity, {
+      pinned: pinnedPaneIds,
+      // Custom (dock) layouts keep their panels until a session ends, as upstream
+      swap: mode === 'auto-grid',
+    })
     paneMemoryRef.current = order.next
     return order
-  }, [sessions, hiddenPaneIds, sessionOrder, gridCapacity])
+  }, [sessions, hiddenPaneIds, sessionOrder, gridCapacity, pinnedPaneIds, mode])
   const visibleSessions = paneOrder.ranked
 
   // Auto-fill: auto-show new sessions and swap idle ones out

@@ -7,7 +7,7 @@ import {
   filterLiveSessions,
   sortLiveSessions,
 } from '../live-filter'
-import { EMPTY_PANE_MEMORY, orderMonitorPanes } from '../monitor-pane-order'
+import { EMPTY_PANE_MEMORY, SWAP_QUIET_SECONDS, orderMonitorPanes } from '../monitor-pane-order'
 import { KANBAN_SORT_DEFAULT_MIGRATED_KEY, KANBAN_SORT_STORAGE_KEY } from '../types'
 import { keepsStableGroupOrder, loadSort, useKanbanGrouping } from '../use-kanban-grouping'
 import type { LiveSession } from '../use-live-sessions'
@@ -172,33 +172,102 @@ describe('Monitor panes (LM2)', () => {
     expect(ids(order.ranked)).toEqual(['a', 'b'])
   })
 
-  it('a session that gets busy takes the slot of the least recently active pane', () => {
+  // 'b' last wrote at 200; SWAP_QUIET_SECONDS later it may give up its slot
+  const quietNow = 200 + SWAP_QUIET_SECONDS
+  const swap = (nowSeconds: number, pinned: string[] = []) => ({
+    swap: true,
+    nowSeconds,
+    pinned: new Set(pinned),
+  })
+
+  it('a busy session takes the slot of the quietest pane once it has been quiet a while', () => {
     const first = orderMonitorPanes(
       [s('a', 100), s('b', 200), s('c', 300)],
       [],
       EMPTY_PANE_MEMORY,
       2,
+      swap(300),
     )
     expect(ids(first.ranked)).toEqual(['c', 'b'])
-    // 'a' gets busy: it replaces 'b' (the quietest shown); 'c' stays put in the page
-    const busy = orderMonitorPanes([s('a', 900), s('b', 200), s('c', 300)], [], first.next, 2)
+    // 'a' writes a line while 'b' was active moments ago: no swap
+    const early = orderMonitorPanes(
+      [s('a', 400), s('b', 200), s('c', 300)],
+      [],
+      first.next,
+      2,
+      swap(400),
+    )
+    expect(ids(early.ranked)).toEqual(['c', 'b'])
+    // 'b' has been quiet long enough: 'a' replaces it; 'c' stays put in the page
+    const busy = orderMonitorPanes(
+      [s('a', quietNow), s('b', 200), s('c', 300)],
+      [],
+      early.next,
+      2,
+      swap(quietNow),
+    )
     expect(ids(busy.ranked)).toEqual(['a', 'c'])
     expect(ids(busy.domOrder)).toEqual(['a', 'c'])
-    // when 'a' ends, its slot goes back to 'b'
-    const ended = orderMonitorPanes([s('b', 200), s('c', 300)], [], busy.next, 2)
-    expect(ids(ended.ranked)).toEqual(['c', 'b'])
   })
 
   it('on equal activity a pane already shown keeps its slot', () => {
     const first = orderMonitorPanes([s('a', 100), s('b', 100)], [], EMPTY_PANE_MEMORY, 1)
     const shown = ids(first.ranked)[0]
     const other = shown === 'a' ? 'b' : 'a'
-    const again = orderMonitorPanes([s(other, 100), s(shown as string, 100)], [], first.next, 1)
+    const again = orderMonitorPanes(
+      [s(other, 100), s(shown as string, 100)],
+      [],
+      first.next,
+      1,
+      swap(10_000),
+    )
     expect(ids(again.ranked)).toEqual([shown])
   })
 
   it('never swaps out a "Move to front" pane', () => {
-    const order = orderMonitorPanes([s('a', 100), s('b', 900)], ['a'], EMPTY_PANE_MEMORY, 1)
+    const order = orderMonitorPanes(
+      [s('a', 100), s('b', 900)],
+      ['a'],
+      EMPTY_PANE_MEMORY,
+      1,
+      swap(10_000),
+    )
     expect(ids(order.ranked)).toEqual(['a'])
+  })
+
+  it('never swaps out a pinned pane, and keeps it when the grid shrinks', () => {
+    const first = orderMonitorPanes([s('a', 100)], [], EMPTY_PANE_MEMORY, 1, swap(100, ['a']))
+    const later = orderMonitorPanes(
+      [s('a', 100), s('b', 900)],
+      [],
+      first.next,
+      1,
+      swap(10_000, ['a']),
+    )
+    expect(ids(later.ranked)).toEqual(['a'])
+    const wide = orderMonitorPanes(
+      [s('a', 100), s('b', 900), s('c', 800)],
+      [],
+      EMPTY_PANE_MEMORY,
+      2,
+    )
+    const shrunk = orderMonitorPanes(
+      [s('a', 100), s('b', 900), s('c', 800)],
+      [],
+      { ...wide.next, shown: ['b', 'c', 'a'] },
+      1,
+      swap(10_000, ['a']),
+    )
+    expect(ids(shrunk.ranked)).toEqual(['a'])
+  })
+
+  it('custom layouts never swap: panels change only when a session ends', () => {
+    const first = orderMonitorPanes([s('a', 100), s('b', 200)], [], EMPTY_PANE_MEMORY, 1)
+    expect(ids(first.ranked)).toEqual(['b'])
+    const busy = orderMonitorPanes([s('a', 99_999), s('b', 200)], [], first.next, 1, {
+      swap: false,
+      nowSeconds: 1_000_000,
+    })
+    expect(ids(busy.ranked)).toEqual(['b'])
   })
 })

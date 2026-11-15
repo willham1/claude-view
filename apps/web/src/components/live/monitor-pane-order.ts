@@ -21,6 +21,9 @@ export interface MonitorPaneOrder {
 
 export const EMPTY_PANE_MEMORY: MonitorPaneMemory = { stableOrder: [], shown: [] }
 
+/** How long a shown pane must be quiet before a busier session may take its slot (useAutoFill's 5 minutes). */
+export const SWAP_QUIET_SECONDS = 5 * 60
+
 /** MonitorGrid's auto layout: columns at least 480px, rows at least 300px, 4px gaps. */
 const MIN_PANE_WIDTH = 480
 const MIN_PANE_HEIGHT = 300
@@ -45,16 +48,24 @@ export function autoGridCapacity(width: number, height: number): number | null {
  * - Panes are rendered in first-seen order (`domOrder`) and placed with CSS `order`
  *   (`rank`), so re-ordering as activity arrives never moves a terminal's DOM node
  *   (upstream avoided that because it made xterm terminals flicker).
- * - Which panes show: "Move to front" choices, then the most recently active. A
- *   session that becomes newer than the least recently active shown pane takes its
- *   slot; on equal activity a pane already shown keeps its slot (no flapping).
+ * - Which panes show: "Move to front" choices, then pinned panes, then panes already
+ *   shown, then free slots go to the most recently active.
+ * - With `swap` on (the auto grid only), a newer session also takes the slot of the
+ *   quietest shown pane, but only once that pane has been quiet for
+ *   `SWAP_QUIET_SECONDS` (as upstream's auto-fill does), so panes don't trade places
+ *   on every line a session writes. Pinned and "Move to front" panes are never
+ *   swapped out. Custom (dock) layouts pass `swap: false`, so their panels change
+ *   only when a session ends, as upstream.
  */
 export function orderMonitorPanes(
   sessions: LiveSession[],
   manualOrder: string[],
   memory: MonitorPaneMemory,
   capacity: number,
+  options: { pinned?: ReadonlySet<string>; swap?: boolean; nowSeconds?: number } = {},
 ): MonitorPaneOrder {
+  const pinned = options.pinned ?? new Set<string>()
+  const nowSeconds = options.nowSeconds ?? Date.now() / 1000
   const currentIds = new Set(sessions.map((s) => s.id))
 
   // First-seen order: prune departed sessions, append newly seen ones
@@ -72,30 +83,34 @@ export function orderMonitorPanes(
     return compareByLastActivityDesc(a, b)
   })
 
-  // Pick which panes show: manual choices, then panes already shown, then the rest
+  // Pick which panes show: manual choices, pinned panes, panes already shown, the rest
   const pick = new Set<string>()
   const add = (id: string) => {
     if (pick.size < capacity && currentIds.has(id)) pick.add(id)
   }
   for (const id of manualPos.keys()) add(id)
+  for (const s of candidates) if (pinned.has(s.id)) add(s.id)
   for (const id of memory.shown) add(id)
   for (const s of candidates) add(s.id)
 
-  // A session newer than the least recently active shown pane takes that pane's
-  // slot (only the leaving pane unmounts; the others stay put). "Move to front"
-  // panes are never swapped out.
-  const byId = new Map(sessions.map((s) => [s.id, s]))
-  for (const s of candidates) {
-    if (pick.has(s.id) || manualPos.has(s.id)) continue
-    let oldest: LiveSession | undefined
-    for (const id of pick) {
-      if (manualPos.has(id)) continue
-      const p = byId.get(id)
-      if (p && (!oldest || p.lastActivityAt < oldest.lastActivityAt)) oldest = p
+  // Auto grid: a newer session takes the slot of the quietest shown pane once that
+  // pane has been quiet a while (only the leaving pane unmounts; the others stay).
+  if (options.swap) {
+    const protectedIds = (id: string) => manualPos.has(id) || pinned.has(id)
+    const byId = new Map(sessions.map((s) => [s.id, s]))
+    for (const s of candidates) {
+      if (pick.has(s.id) || protectedIds(s.id)) continue
+      let quietest: LiveSession | undefined
+      for (const id of pick) {
+        if (protectedIds(id)) continue
+        const p = byId.get(id)
+        if (p && (!quietest || p.lastActivityAt < quietest.lastActivityAt)) quietest = p
+      }
+      if (!quietest || s.lastActivityAt <= quietest.lastActivityAt) break
+      if (nowSeconds - quietest.lastActivityAt < SWAP_QUIET_SECONDS) break
+      pick.delete(quietest.id)
+      pick.add(s.id)
     }
-    if (!oldest || s.lastActivityAt <= oldest.lastActivityAt) break
-    pick.delete(oldest.id)
-    pick.add(s.id)
   }
 
   const ranked = candidates.filter((s) => pick.has(s.id))

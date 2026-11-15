@@ -80,12 +80,20 @@ impl LiveSessionManager {
                 + line.cache_creation_tokens.unwrap_or(0);
             if turn_input > 0 {
                 acc.context_window_tokens = turn_input;
+                if acc.start_context_tokens == 0 {
+                    acc.start_context_tokens = turn_input;
+                }
+                acc.peak_context_tokens = acc.peak_context_tokens.max(turn_input);
             }
         }
 
         // Track model (before per-turn cost)
         if let Some(ref model) = line.model {
             acc.model = Some(model.clone());
+        }
+        // Effort of the latest request; a line without one keeps the last.
+        if let Some(ref effort) = line.effort {
+            acc.effort = Some(effort.clone());
         }
 
         // Per-turn cost accumulation

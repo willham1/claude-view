@@ -145,6 +145,28 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
     start time when it has no transcript yet (`coordinator/dispatch.rs`, `session_factory.rs`). Hooks still count
     as activity, including hooks that arrived before the session was found.
 
+13. **Session cards show the same details in every state (LM4):** a Live Monitor card (Board, Grid, Harness,
+    recently closed) now has detail lines under its state line, the same whether the session is running or
+    awaiting input, at the Sub-Agents tab's level of detail: model and effort level of the latest request,
+    request and turn counts, the prompt-cache countdown with its lifetime (hover for the cache explainer), the
+    context window at the first request / now / at its peak against the window with a percentage, and helper
+    counts (running / done / failed). Before, an "Awaiting input" card showed no model or tokens and a running
+    card no cache countdown. The state line keeps the spinner, elapsed time and tokens (or "Awaiting input" /
+    "Baked"), but leaves the model and countdown to the details. Cards are taller. The server now reads the
+    main session's effort (the top-level `effort` on assistant lines), its first and peak context, and its
+    request count (deduplicated by message + request id) from the transcript (`effort`, `startContextTokens`,
+    `peakContextTokens`, `requestCount` on live sessions). Start and peak count from the server's start (it
+    reads the whole transcript then), so peak spans compactions. A card from a server without these fields
+    leaves effort, requests, start and peak out (`SessionCardDetails.tsx`). Helper cost is not on the card:
+    it needs each helper's transcript, which only the Sub-Agents tab fetches.
+    What you will notice:
+    - **"turns" is not your prompt count:** it is upstream's turn count, which with hooks off counts every user
+      line in the transcript, tool results and task notices included, so it often sits close to the request
+      count. The hover says so.
+    - **"helpers N running" can be too high:** it is the status the server reports, and some background helpers
+      are never marked finished, so an idle session can read "helpers 31 running". The Sub-Agents tab's bars
+      (change 9) show which are really working.
+
 ## Running it
 
 - Launcher scripts are in `fork/launcher/` and find the repo from their own location. They run read-only:

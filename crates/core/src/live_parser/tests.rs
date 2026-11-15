@@ -162,6 +162,36 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_tail_extracts_effort_from_assistant_lines_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("effort.jsonl");
+        let mut f = File::create(&path).unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"assistant","effort":"xhigh","message":{{"role":"assistant","model":"claude-opus-5-5","content":[{{"type":"text","text":"hi"}}],"usage":{{"input_tokens":10,"output_tokens":5}}}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"assistant","effort":"","message":{{"role":"assistant","content":[{{"type":"text","text":"no effort"}}]}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"user","effort":"low","message":{{"role":"user","content":"hello"}}}}"#
+        )
+        .unwrap();
+        f.flush().unwrap();
+
+        let finders = TailFinders::new();
+        let (lines, _) = parse_tail(&path, 0, &finders).unwrap();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].effort.as_deref(), Some("xhigh"));
+        assert_eq!(lines[1].effort, None, "an empty effort is no effort");
+        assert_eq!(lines[2].effort, None, "only assistant lines carry effort");
+    }
+
+    #[test]
     fn test_parse_tail_content_blocks() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("blocks.jsonl");

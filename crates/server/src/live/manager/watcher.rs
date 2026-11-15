@@ -346,6 +346,8 @@ impl LiveSessionManager {
             acc.compact_count = 0;
             acc.accumulated_cost = claude_view_core::pricing::CostBreakdown::default();
             acc.seen_api_calls.clear();
+            acc.start_context_tokens = 0;
+            acc.peak_context_tokens = 0;
             acc.phase_labels.clear();
             acc.message_buf.clear();
             acc.message_buf_dirty = false;

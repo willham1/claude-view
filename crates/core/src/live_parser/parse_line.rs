@@ -35,6 +35,7 @@ pub fn parse_single_line(raw: &[u8], finders: &TailFinders) -> LiveLine {
                 content_extended: String::new(),
                 tool_names: Vec::new(),
                 model: None,
+                effort: None,
                 input_tokens: None,
                 output_tokens: None,
                 cache_read_tokens: None,
@@ -162,6 +163,18 @@ pub fn parse_single_line(raw: &[u8], finders: &TailFinders) -> LiveLine {
             .get("model")
             .or_else(|| msg.and_then(|m| m.get("model")))
             .and_then(|v| v.as_str())
+            .map(String::from)
+    } else {
+        None
+    };
+
+    // Effort level: a top-level field on assistant lines (same reading as
+    // `subagent_context::summarize_subagent_jsonl`).
+    let effort = if line_type == LineType::Assistant {
+        parsed
+            .get("effort")
+            .and_then(|v| v.as_str())
+            .filter(|e| !e.is_empty())
             .map(String::from)
     } else {
         None
@@ -358,6 +371,7 @@ pub fn parse_single_line(raw: &[u8], finders: &TailFinders) -> LiveLine {
         content_extended,
         tool_names,
         model,
+        effort,
         input_tokens,
         output_tokens,
         cache_read_tokens,

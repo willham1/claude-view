@@ -113,6 +113,9 @@ pub struct LiveLine {
     pub content_extended: String,
     pub tool_names: Vec<String>,
     pub model: Option<String>,
+    /// Effort level of the request (`low` … `max`), from the top-level `effort`
+    /// field Claude Code writes on assistant lines. None when absent or empty.
+    pub effort: Option<String>,
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub cache_read_tokens: Option<u64>,

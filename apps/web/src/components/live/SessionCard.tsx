@@ -21,8 +21,10 @@ import {
   Terminal,
   TreePine,
 } from 'lucide-react'
+import { useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useFullInteraction } from '../../hooks/use-full-interaction'
+import { withTranscriptCosts } from '../../hooks/use-subagent-context'
 import { useTeamSidechains } from '../../hooks/use-teams'
 import { formatCostUsd } from '../../lib/format-utils'
 import { buildSessionUrl } from '../../lib/url-utils'
@@ -36,10 +38,11 @@ import { SessionCardDetails } from './SessionCardDetails'
 import { TaskProgressList } from './TaskProgressList'
 import { hasUnavailableCost, unavailableCostReason } from './cost-display'
 import { getEffectiveBranch } from './effective-branch'
+import { sessionCostWithHelpers, useHelperCostStore } from './helper-costs'
 import { sortSubAgentsForCard } from './sort-sub-agents'
 import type { AgentState } from './types'
 import { GROUP_DEFAULTS, KNOWN_STATES } from './types'
-import { type LiveSession, sessionTotalCost } from './use-live-sessions'
+import type { LiveSession } from './use-live-sessions'
 
 // ─── StateBadge (exported — used by Harness, ListView, TerminalOverlay) ──
 
@@ -405,8 +408,17 @@ export function SessionCard({
     session.teamName ?? null,
     session.teamName ? session.id : null,
   )
-  const sidechainCostTotal = sidechainsData?.reduce((sum, sc) => sum + (sc.costUsd ?? 0), 0) ?? 0
-  const totalCost = sessionTotalCost(session) + sidechainCostTotal
+  // Total = main session + helpers, the panel header's figure (fork, LM7).
+  // Helper cost from their own transcripts, polled once per page; until it
+  // arrives, what the parent transcript reported.
+  const helperTranscriptCosts = useHelperCostStore((s) => s.costs[session.id])
+  const hasSidechains = (sidechainsData?.length ?? 0) > 0
+  const costedSubAgents = useMemo(
+    () =>
+      hasSidechains ? undefined : withTranscriptCosts(session.subAgents, helperTranscriptCosts),
+    [hasSidechains, session.subAgents, helperTranscriptCosts],
+  )
+  const totalCost = sessionCostWithHelpers(session, helperTranscriptCosts, sidechainsData)
   const isCostUnavailable = hasUnavailableCost(totalCost, session.cost, session.tokens.totalTokens)
   const totalCostLabel = isCostUnavailable ? 'Unavailable' : formatCostUsd(totalCost)
   const costTitle = isCostUnavailable ? unavailableCostReason(session.cost) : undefined
@@ -464,7 +476,7 @@ export function SessionCard({
           cost={session.cost}
           cacheStatus={session.cacheStatus}
           tokens={session.tokens}
-          subAgents={session.subAgents}
+          subAgents={costedSubAgents}
           sidechains={sidechainsData}
           compactCount={session.compactCount}
         >

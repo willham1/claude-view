@@ -1,7 +1,7 @@
+import type { TeamMemberSidechain } from '@claude-view/shared/types/generated/TeamMemberSidechain'
 import { useQuery } from '@tanstack/react-query'
 import type { InboxMessage, TeamDetail, TeamSummary } from '../types/generated'
 import type { TeamCostBreakdown } from '../types/generated/TeamCostBreakdown'
-import type { TeamMemberSidechain } from '@claude-view/shared/types/generated/TeamMemberSidechain'
 
 // ============================================================================
 // Fetch functions
@@ -31,7 +31,7 @@ async function fetchTeamCost(name: string): Promise<TeamCostBreakdown> {
   return res.json()
 }
 
-async function fetchTeamSidechains(
+export async function fetchTeamSidechains(
   name: string,
   sessionId: string,
 ): Promise<TeamMemberSidechain[]> {

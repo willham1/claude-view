@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SessionCard } from './SessionCard'
 import type { LiveSession } from './use-live-sessions'
 
@@ -267,7 +267,15 @@ describe('SessionCard interaction display', () => {
 // LM4: every card shows the same detail lines whatever the session's state,
 // at least what a helper's row in the Sub-Agents tab shows.
 describe('SessionCard details (LM4)', () => {
-  const nowSecs = Math.floor(Date.now() / 1000)
+  // Frozen clock: the countdown must not tick between building the mock and rendering.
+  const nowSecs = 1_800_000_000
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(nowSecs * 1000)
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
   const detailed = {
     model: 'claude-opus-5-5',
     effort: 'xhigh',
@@ -304,7 +312,12 @@ describe('SessionCard details (LM4)', () => {
       const modelLine = screen.getByTestId('card-model-line')
       expect(modelLine).toHaveTextContent('42 reqs')
       expect(modelLine).toHaveTextContent('7 turns')
-      expect(screen.getByTestId('card-cache')).toHaveTextContent(/cache 50:\d\d left \(1h\)/)
+      // "turns" counts transcript user lines (tool results too): the hover says so.
+      expect(screen.getByText('7 turns')).toHaveAttribute(
+        'title',
+        expect.stringContaining('tool results'),
+      )
+      expect(screen.getByTestId('card-cache')).toHaveTextContent('cache 50:00 left (1h)')
       const ctx = screen.getByTestId('card-context-line')
       expect(ctx).toHaveTextContent('start 20.0k')
       expect(ctx).toHaveTextContent('now 50.0k')

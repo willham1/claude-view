@@ -159,6 +159,13 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
     reads the whole transcript then), so peak spans compactions. A card from a server without these fields
     leaves effort, requests, start and peak out (`SessionCardDetails.tsx`). Helper cost is not on the card:
     it needs each helper's transcript, which only the Sub-Agents tab fetches.
+    What you will notice:
+    - **"turns" is not your prompt count:** it is upstream's turn count, which with hooks off counts every user
+      line in the transcript, tool results and task notices included, so it often sits close to the request
+      count. The hover says so.
+    - **"helpers N running" can be too high:** it is the status the server reports, and some background helpers
+      are never marked finished, so an idle session can read "helpers 31 running". The Sub-Agents tab's bars
+      (change 9) show which are really working.
 
 ## Running it
 

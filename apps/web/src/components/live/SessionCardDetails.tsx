@@ -121,7 +121,7 @@ export function SessionCardDetails({ session }: { session: DetailFields }) {
         {turns > 0 && (
           <>
             {DOT}
-            <span title="Your prompts in this session">
+            <span title="User lines in the transcript: your prompts, tool results and task notices (not only your prompts)">
               {turns} turn{turns !== 1 ? 's' : ''}
             </span>
           </>
@@ -169,7 +169,7 @@ export function SessionCardDetails({ session }: { session: DetailFields }) {
           className="text-xs font-mono text-gray-400 dark:text-gray-500"
           data-testid="card-helpers-line"
         >
-          <span title="Sub-agents (helpers) in this session">
+          <span title="Sub-agents (helpers) in this session, by the status the server reports. A background helper is not always marked finished, so 'running' can include helpers that have stopped.">
             helpers{' '}
             {running > 0 && (
               <span className="text-green-600 dark:text-green-400">{running} running</span>

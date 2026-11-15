@@ -78,6 +78,19 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
    so a helper on one long command can show yellow, or even grey, while still busy
    (`subAgentActivity`, `agentTypeColor` in `SwimLanes.tsx`).
 
+10. **Live Monitor sorts by last activity (LM2):** like the Sub-Agents tab, sessions show most recently active
+    first and re-order live, by default in every view: Grid (the page's default sort is now "last active, newest
+    first"), List (starts on the Last Active column, newest first; other column headers still sort), Board (each
+    column, newest first, instead of upstream's cache-warmth / urgency order for Needs You and turn-start order for
+    Running; with Project + Branch grouping, projects and branches come in order of their most recently active
+    session and re-order live, where upstream froze them in first-seen order), Harness (Needs You sidebar) and
+    Monitor (auto-grid panes are placed with CSS `order`, so terminals aren't moved or re-mounted; a pane already
+    on screen keeps its slot, free slots go to the most recently active; "Move to front" still wins). The Board's
+    Sort control ("Last activity", "Alphabetical", "Highest cost") still works; Alphabetical and Highest cost order
+    the groups, cards in a column stay newest first. A Sort choice stored in the browser before this change is
+    dropped once (marker `claude-view:kanban-sort-lm2` in localStorage), so the new default shows without clearing
+    anything; later choices are kept (`live-filter.ts`, `use-kanban-grouping.ts`, `monitor-pane-order.ts`).
+
 ## Running it
 
 - Launcher scripts are in `fork/launcher/` and find the repo from their own location. They run read-only:

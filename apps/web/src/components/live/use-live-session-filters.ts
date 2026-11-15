@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react'
 import type { LiveSessionFilters, LiveSortDirection, LiveSortField } from './live-filter'
-import { DEFAULT_LIVE_FILTERS } from './live-filter'
+import { DEFAULT_LIVE_FILTERS, defaultSortDir } from './live-filter'
 
 const FILTER_KEYS = ['status', 'project', 'branch', 'q', 'sort', 'dir'] as const
 
@@ -90,13 +90,14 @@ export function useLiveSessionFilters(
       if (dir) {
         params.set('dir', dir)
       } else {
-        // Toggle direction if same field, otherwise default to asc
-        const currentSort = searchParams.get('sort')
-        const currentDir = searchParams.get('dir') ?? 'asc'
+        // Toggle direction if same field (the default counts when the URL has none),
+        // otherwise start in the field's natural direction (newest first for last activity)
+        const currentSort = searchParams.get('sort') ?? DEFAULT_LIVE_FILTERS.sort
+        const currentDir = searchParams.get('dir') ?? DEFAULT_LIVE_FILTERS.sortDir
         if (currentSort === field) {
           params.set('dir', currentDir === 'asc' ? 'desc' : 'asc')
         } else {
-          params.set('dir', 'asc')
+          params.set('dir', defaultSortDir(field))
         }
       }
       setSearchParams(params, { replace: true })

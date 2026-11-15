@@ -1,8 +1,10 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
+import { compareByLastActivityDesc } from './live-filter'
 import type { KanbanGroupBy, KanbanSort } from './types'
 import {
   KANBAN_COLLAPSE_STORAGE_KEY,
   KANBAN_GROUP_BY_STORAGE_KEY,
+  KANBAN_SORT_DEFAULT_MIGRATED_KEY,
   KANBAN_SORT_STORAGE_KEY,
 } from './types'
 import { type LiveSession, sessionTotalCost } from './use-live-sessions'
@@ -78,7 +80,8 @@ export function groupSessionsByProjectBranch(
       const branchMaxActivity = Math.max(...branchSessions.map((s) => s.lastActivityAt))
       branches.push({
         branchName: branchKey === '__null__' ? null : branchKey,
-        sessions: branchSessions,
+        // Most recently active first within the group (fork, LM2)
+        sessions: [...branchSessions].sort(compareByLastActivityDesc),
         sessionCount: branchSessions.length,
         maxActivityAt: branchMaxActivity,
       })
@@ -144,7 +147,11 @@ function newGroupTiebreak(
     return (b.totalCostUsd ?? 0) - (a.totalCostUsd ?? 0)
   }
   // 'recent'
-  return b.maxActivityAt - a.maxActivityAt
+  const diff = b.maxActivityAt - a.maxActivityAt
+  if (diff !== 0) return diff
+  const aName = a.projectName ?? a.branchName ?? ''
+  const bName = b.projectName ?? b.branchName ?? ''
+  return aName.localeCompare(bName)
 }
 
 // --- Collapse state ---
@@ -184,14 +191,34 @@ function loadGroupBy(): KanbanGroupBy {
 
 // --- Sort state ---
 
-function loadSort(): KanbanSort {
+/**
+ * Reads the stored Sort choice. Fork (LM2): the first time this runs after the
+ * change to live last-activity order, any older stored choice is dropped once so
+ * the new default ('recent') shows without clearing anything by hand.
+ */
+export function loadSort(): KanbanSort {
   try {
+    if (localStorage.getItem(KANBAN_SORT_DEFAULT_MIGRATED_KEY) !== '1') {
+      localStorage.removeItem(KANBAN_SORT_STORAGE_KEY)
+      localStorage.setItem(KANBAN_SORT_DEFAULT_MIGRATED_KEY, '1')
+      return 'recent'
+    }
     const raw = localStorage.getItem(KANBAN_SORT_STORAGE_KEY)
     if (raw === 'alphabetical' || raw === 'cost') return raw
     return 'recent'
   } catch {
     return 'recent'
   }
+}
+
+/**
+ * Whether known groups keep their first-seen position. Fork (LM2): with 'recent'
+ * the groups re-order live by their most recently active session (like the
+ * Sub-Agents tab); 'alphabetical' needs no freezing; 'cost' keeps upstream's
+ * stable order so groups don't jump as costs tick up.
+ */
+export function keepsStableGroupOrder(sort: KanbanSort): boolean {
+  return sort === 'cost'
 }
 
 // --- Hook ---
@@ -208,6 +235,10 @@ export function useKanbanGrouping(sessions: LiveSession[], urlGroupBy: KanbanGro
 
   const projectGroups = useMemo(() => {
     if (groupBy !== 'project-branch') return []
+
+    if (!keepsStableGroupOrder(sort)) {
+      return groupSessionsByProjectBranch(sessions, undefined, undefined, sort)
+    }
 
     const groups = groupSessionsByProjectBranch(
       sessions,

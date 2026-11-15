@@ -1,0 +1,75 @@
+import { compareByLastActivityDesc } from './live-filter'
+import type { LiveSession } from './use-live-sessions'
+
+export interface MonitorPaneMemory {
+  /** First-seen order of session ids (render order). */
+  stableOrder: string[]
+  /** Ids shown last time, so a pane isn't swapped out just because another got busier. */
+  shown: string[]
+}
+
+export interface MonitorPaneOrder {
+  /** Panes in display order: "Move to front" ones first, then most recently active. */
+  ranked: LiveSession[]
+  /** The same panes in first-seen order, for rendering without moving DOM nodes. */
+  domOrder: LiveSession[]
+  /** Display position (0 = first) per session id, for the CSS `order` property. */
+  rank: Map<string, number>
+  /** Memory to pass into the next call. */
+  next: MonitorPaneMemory
+}
+
+export const EMPTY_PANE_MEMORY: MonitorPaneMemory = { stableOrder: [], shown: [] }
+
+/**
+ * Orders the Monitor view's panes (fork, LM2): most recently active first, like the
+ * Sub-Agents tab, with "Move to front" choices on top. At most `capacity` panes show.
+ *
+ * - Panes are rendered in first-seen order (`domOrder`) and placed with CSS `order`
+ *   (`rank`), so re-ordering as activity arrives never moves a terminal's DOM node
+ *   (upstream avoided that because it made xterm terminals flicker).
+ * - Which panes show is sticky: a pane already on screen stays while it is live and
+ *   there's room (so its terminal isn't torn down when another session gets busier);
+ *   free slots go to "Move to front" choices, then the most recently active sessions.
+ */
+export function orderMonitorPanes(
+  sessions: LiveSession[],
+  manualOrder: string[],
+  memory: MonitorPaneMemory,
+  capacity: number,
+): MonitorPaneOrder {
+  const currentIds = new Set(sessions.map((s) => s.id))
+
+  // First-seen order: prune departed sessions, append newly seen ones
+  const stableOrder = memory.stableOrder.filter((id) => currentIds.has(id))
+  const known = new Set(stableOrder)
+  for (const s of sessions) {
+    if (!known.has(s.id)) stableOrder.push(s.id)
+  }
+
+  const manualPos = new Map(manualOrder.filter((id) => currentIds.has(id)).map((id, i) => [id, i]))
+  const candidates = [...sessions].sort((a, b) => {
+    const am = manualPos.get(a.id) ?? Number.POSITIVE_INFINITY
+    const bm = manualPos.get(b.id) ?? Number.POSITIVE_INFINITY
+    if (am !== bm) return am - bm
+    return compareByLastActivityDesc(a, b)
+  })
+
+  // Pick which panes show: manual choices, then panes already shown, then the rest
+  const pick = new Set<string>()
+  const add = (id: string) => {
+    if (pick.size < capacity && currentIds.has(id)) pick.add(id)
+  }
+  for (const id of manualPos.keys()) add(id)
+  for (const id of memory.shown) add(id)
+  for (const s of candidates) add(s.id)
+
+  const ranked = candidates.filter((s) => pick.has(s.id))
+  const rank = new Map(ranked.map((s, i) => [s.id, i]))
+  const stablePos = new Map(stableOrder.map((id, i) => [id, i]))
+  const domOrder = [...ranked].sort(
+    (a, b) => (stablePos.get(a.id) ?? 0) - (stablePos.get(b.id) ?? 0),
+  )
+
+  return { ranked, domOrder, rank, next: { stableOrder, shown: ranked.map((s) => s.id) } }
+}

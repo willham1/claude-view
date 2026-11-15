@@ -4,6 +4,7 @@ import { formatRelativeTime } from '../../lib/format-utils'
 import { cn } from '../../lib/utils'
 import { BranchHeader, ProjectHeader } from './KanbanSwimLaneHeader'
 import { SessionCard } from './SessionCard'
+import { sortByLastActivity } from './live-filter'
 import type { AgentStateGroup, KanbanGroupBy } from './types'
 import type { ProjectGroup } from './use-kanban-grouping'
 import { branchCollapseKey, projectCollapseKey } from './use-kanban-grouping'
@@ -28,47 +29,12 @@ interface KanbanViewProps {
   showClosed?: boolean
 }
 
-/** Sort key for needs_you sessions: urgency ordering */
-export function needsYouSortKey(session: LiveSession): number {
-  switch (session.agentState.state) {
-    case 'needs_permission':
-      return 0
-    case 'awaiting_input':
-      return 1
-    case 'interrupted':
-      return 2
-    case 'error':
-      return 3
-    case 'awaiting_approval':
-      return 4
-    case 'idle':
-      return 5
-    default:
-      return 6
-  }
-}
-
-function sortNeedsYou(sessions: LiveSession[]): LiveSession[] {
-  return [...sessions].sort((a, b) => {
-    const cacheRank = (s: LiveSession) =>
-      s.cacheStatus === 'warm' ? 0 : s.cacheStatus === 'unknown' ? 1 : 2
-    const cacheDiff = cacheRank(a) - cacheRank(b)
-    if (cacheDiff !== 0) return cacheDiff
-    const keyDiff = needsYouSortKey(a) - needsYouSortKey(b)
-    if (keyDiff !== 0) return keyDiff
-    return b.lastActivityAt - a.lastActivityAt
-  })
-}
-
-function sortAutonomous(sessions: LiveSession[]): LiveSession[] {
-  return [...sessions].sort((a, b) => {
-    const aTime = a.currentTurnStartedAt ?? a.lastActivityAt
-    const bTime = b.currentTurnStartedAt ?? b.lastActivityAt
-    return bTime - aTime
-  })
-}
-
-function splitByGroup(sessions: LiveSession[]): Record<AgentStateGroup, LiveSession[]> {
+/**
+ * Splits sessions into the Board's columns. Fork (LM2): each column lists the most
+ * recently active session first (upstream ordered Needs You by cache warmth and
+ * urgency, Running by turn start), so cards re-order live as activity arrives.
+ */
+export function splitByGroup(sessions: LiveSession[]): Record<AgentStateGroup, LiveSession[]> {
   const groups: Record<AgentStateGroup, LiveSession[]> = {
     needs_you: [],
     autonomous: [],
@@ -76,8 +42,8 @@ function splitByGroup(sessions: LiveSession[]): Record<AgentStateGroup, LiveSess
   for (const s of sessions) {
     groups[s.agentState.group].push(s)
   }
-  groups.needs_you = sortNeedsYou(groups.needs_you)
-  groups.autonomous = sortAutonomous(groups.autonomous)
+  groups.needs_you = sortByLastActivity(groups.needs_you)
+  groups.autonomous = sortByLastActivity(groups.autonomous)
   return groups
 }
 

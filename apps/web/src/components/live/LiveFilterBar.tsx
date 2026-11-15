@@ -48,7 +48,7 @@ const GROUP_BY_OPTIONS: { value: KanbanGroupBy; label: string }[] = [
 ]
 
 const SORT_OPTIONS: { value: KanbanSort; label: string }[] = [
-  { value: 'recent', label: 'Most recent' },
+  { value: 'recent', label: 'Last activity' },
   { value: 'alphabetical', label: 'Alphabetical' },
   { value: 'cost', label: 'Highest cost' },
 ]

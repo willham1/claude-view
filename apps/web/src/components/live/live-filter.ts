@@ -18,8 +18,24 @@ export const DEFAULT_LIVE_FILTERS: LiveSessionFilters = {
   projects: [],
   branches: [],
   search: '',
-  sort: 'status',
-  sortDir: 'asc',
+  // Fork (LM2): most recently active first, like the Sub-Agents tab.
+  sort: 'last_active',
+  sortDir: 'desc',
+}
+
+/** Direction a sort field starts in when first picked: newest first for last activity. */
+export function defaultSortDir(field: LiveSortField): LiveSortDirection {
+  return field === 'last_active' ? 'desc' : 'asc'
+}
+
+/** Comparator: most recently active session first. Ties keep their input order. */
+export function compareByLastActivityDesc(a: LiveSession, b: LiveSession): number {
+  return b.lastActivityAt - a.lastActivityAt
+}
+
+/** Sessions ordered most recently active first. Pure and non-mutating. */
+export function sortByLastActivity(sessions: LiveSession[]): LiveSession[] {
+  return [...sessions].sort(compareByLastActivityDesc)
 }
 
 export function sortLiveSessions(
@@ -54,12 +70,9 @@ export function sortLiveSessions(
         break
     }
 
-    // Tiebreaker: lastActivityAt descending
-    if (cmp === 0) {
-      cmp = b.lastActivityAt - a.lastActivityAt
-    }
-
-    return dir === 'desc' ? -cmp : cmp
+    if (cmp !== 0) return dir === 'desc' ? -cmp : cmp
+    // Tiebreaker: most recently active first, whichever the direction
+    return compareByLastActivityDesc(a, b)
   })
 }
 

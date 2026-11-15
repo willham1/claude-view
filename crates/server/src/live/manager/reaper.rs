@@ -131,7 +131,7 @@ impl LiveSessionManager {
 // Tests
 // ---------------------------------------------------------------------------
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::atomic::AtomicU32;
@@ -159,7 +159,7 @@ mod tests {
     /// Only initialises the fields that `reap_session` touches:
     /// sessions, transcript_to_session, hook_event_channels, accumulators,
     /// tx (broadcast), snapshot_tx.
-    async fn make_test_manager() -> (
+    pub(in crate::live::manager) async fn make_test_manager() -> (
         Arc<LiveSessionManager>,
         broadcast::Receiver<SessionEvent>,
         mpsc::Receiver<()>,

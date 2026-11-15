@@ -50,7 +50,12 @@ pub fn apply_mutation_to_session(
             }
             None
         }
-        SessionMutation::Lifecycle(event) => apply_lifecycle(&mut session.hook, event, now),
+        SessionMutation::Lifecycle(event) => {
+            // A hook has reported: from now on hooks own agent_state, and the
+            // transcript-derived fallback (manager/transcript_state.rs) stops.
+            session.hook.agent_state_set_at = now.max(1);
+            apply_lifecycle(&mut session.hook, event, now)
+        }
         SessionMutation::Reconcile(data) => {
             apply_reconcile(&mut session.jsonl, data);
             // Cross-source: model (only if newer than current)
@@ -123,5 +128,31 @@ pub fn common_post_mutation(
     CommonPostMutation {
         bind_pid,
         update_activity_at: Some(now),
+    }
+}
+
+#[cfg(test)]
+mod hook_marker_tests {
+    use super::*;
+    use crate::live::coordinator::session_factory::create_session_from_start;
+    use crate::live::state::{AgentState, AgentStateGroup};
+
+    #[test]
+    fn hook_lifecycle_event_marks_session_as_hook_reported() {
+        let mut s = create_session_from_start("s1", &None, &None, &None, 100);
+        assert_eq!(s.hook.agent_state_set_at, 0);
+        let state = AgentState {
+            group: AgentStateGroup::Autonomous,
+            state: "acting".into(),
+            label: "Using Bash".into(),
+            context: None,
+        };
+        let mutation = SessionMutation::Lifecycle(LifecycleEvent::StateChange {
+            agent_state: state,
+            event_name: "PreToolUse".into(),
+            pid: None,
+        });
+        apply_mutation_to_session(&mut s, &mutation, 200);
+        assert_eq!(s.hook.agent_state_set_at, 200);
     }
 }

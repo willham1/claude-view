@@ -95,6 +95,12 @@ impl LiveSessionManager {
                 // resolved claude_session_id).
                 manager.reconcile_ownership().await;
 
+                // Phase 2d: transcript-derived state for sessions no hook
+                // reports on (every 30s). Catches what a transcript write
+                // doesn't: a helper finishing or going stale while the main
+                // turn is over (fork change 11, transcript_state.rs).
+                manager.refresh_all_transcript_states().await;
+
                 // Unconditional snapshot save (defense in depth)
                 manager.save_session_snapshot_from_state().await;
             }

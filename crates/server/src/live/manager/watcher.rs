@@ -455,11 +455,28 @@ impl LiveSessionManager {
             .cloned()
             .unwrap_or_else(|| session_id.clone());
 
+        // No hook reports on this session: read its state from the transcript
+        // (fork change 11, transcript_state.rs). Done before the write lock.
+        let wants_derived = self
+            .sessions
+            .read()
+            .await
+            .get(&map_key)
+            .is_some_and(super::transcript_state::wants_transcript_state);
+        let derived = if wants_derived {
+            Some(super::transcript_state::derive_transcript_state(path).await)
+        } else {
+            None
+        };
+
         // Update the shared session map
         let mut sessions = self.sessions.write().await;
         if let Some(session) = sessions.get_mut(&map_key) {
             if session.status == SessionStatus::Done {
                 return;
+            }
+            if let Some(derived) = derived {
+                super::transcript_state::apply_transcript_state(session, &derived);
             }
             apply_jsonl_metadata(
                 session,

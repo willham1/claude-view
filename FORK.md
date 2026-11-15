@@ -106,6 +106,36 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
     dropped once (marker `claude-view:kanban-sort-lm2` in localStorage), so the new default shows without clearing
     anything; later choices are kept (`live-filter.ts`, `use-kanban-grouping.ts`, `monitor-pane-order.ts`).
 
+11. **Live Monitor columns without hooks (LM1):** upstream sets a live session's state only from hooks, so with hooks
+    off (how this fork runs) every session sat in **Needs You** labelled "Unknown" and **Running** stayed empty. Until
+    a hook reports on a session, its state now comes from its transcript (the same reading startup recovery used),
+    refreshed on each transcript write and every 30 s. A session whose turn has ended while a background helper is
+    still working shows in **Running** as "Waiting on a background helper"; a helper counts as working while its
+    `subagents/agent-*.meta.json` lacks `"finished": true` and its transcript was written in the last 30 minutes
+    (`crates/server/src/live/manager/transcript_state.rs`; a hook event sets `agent_state_set_at` and hands the state
+    back to hooks). A question (AskUserQuestion), a plan for review (ExitPlanMode), an interrupt and a local slash
+    command (`/context`, `/usage`, `/compact`) read as **Needs You**, as with hooks. If the last lines are only
+    bookkeeping (no message), the state is kept, so a busy session doesn't flip columns mid-turn. A helper that has
+    just finished still counts for 10 s, covering the moment before its hand-back reaches the lead's transcript,
+    but only while the lead has written no message since the helper finished (compared to the millisecond). Tool
+    output is never read as a local command or an interrupt. A `<task-notification>` line counts as the start of a
+    turn only once a model request (`api-request` line) follows it. Leftover notices after an answered hand-back,
+    and "stopped" notices written when a session is reopened, get no reply, so they don't keep a session in
+    Running.
+    What you will notice:
+    - **Dings:** a session that ends its turn now moves into Needs You, so the Live Monitor's sound (on by default)
+      chimes at each turn end. Before, every card already sat in Needs You and never moved.
+    - **"Paused":** a session waiting for your prompt says "Paused" with an amber dot in its panel header, where it
+      said "Running".
+    - **Permission prompts are not visible:** a session stopped at a permission prompt still shows in Running as
+      "Using <tool>". The transcript doesn't record the prompt; only hooks can see it.
+    - **Background commands don't count:** only helpers keep an ended turn in Running. A session waiting on its own
+      background command (a `run_in_background` Bash call) shows in Needs You as "Waiting for your next prompt" and
+      chimes, though it will carry on by itself when the command ends.
+    - **Brief false chime on a queued hand-back:** when a helper finishes while the lead is still busy, its hand-back
+      is delivered 1–3 s after the lead's turn ends. If no other helper is running, the lead shows in Needs You (and
+      chimes) for those seconds, then goes back to Running. Seen twice in 14 days of the owner's transcripts.
+
 ## Running it
 
 - Launcher scripts are in `fork/launcher/` and find the repo from their own location. They run read-only:

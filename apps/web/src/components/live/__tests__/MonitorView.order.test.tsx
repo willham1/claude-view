@@ -2,6 +2,7 @@ import { render } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useDockLayoutStore } from '../../../store/dock-layout-store'
+import { useMonitorStore } from '../../../store/monitor-store'
 import { MonitorView } from '../MonitorView'
 import { autoGridCapacity } from '../monitor-pane-order'
 import type { LiveSession } from '../use-live-sessions'
@@ -14,7 +15,14 @@ vi.mock('../../cli-terminal/CliTerminal', () => ({ CliTerminal: () => null }))
 vi.mock('../BlockTerminalPane', () => ({ BlockTerminalPane: () => null }))
 vi.mock('../DockLayout', () => ({
   DockLayout: ({ sessions }: { sessions: LiveSession[] }) => (
-    <div data-testid="dock" data-count={sessions.length} />
+    <div
+      data-testid="dock"
+      data-count={sessions.length}
+      data-ids={sessions
+        .map((s) => s.id)
+        .sort()
+        .join(',')}
+    />
   ),
 }))
 vi.mock('../GridControls', () => ({ GridControls: () => null }))
@@ -81,6 +89,7 @@ describe('MonitorView capacity (LM2)', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     useDockLayoutStore.setState({ monitorLayoutMode: 'auto-grid' })
+    useMonitorStore.setState({ pinnedPaneIds: new Set() })
   })
 
   it('auto grid shows only the panes that fit, newest first', () => {
@@ -102,6 +111,31 @@ describe('MonitorView capacity (LM2)', () => {
     useDockLayoutStore.setState({ monitorLayoutMode: 'custom' })
     const { getByTestId } = render(<MonitorView sessions={six} />)
     expect(getByTestId('dock').dataset.count).toBe('6')
+  })
+
+  it('custom layout never swaps a panel for a busier session', () => {
+    useDockLayoutStore.setState({ monitorLayoutMode: 'custom' })
+    const nine = Array.from({ length: 9 }, (_, i) =>
+      makeLiveSession({ id: `s${i}`, lastActivityAt: 100 + i }),
+    )
+    const { getByTestId, rerender } = render(<MonitorView sessions={nine} />)
+    const before = getByTestId('dock').dataset.ids
+    expect(before).toBe('s1,s2,s3,s4,s5,s6,s7,s8')
+    // s0 becomes the newest while the others have been quiet for years
+    const busy = [{ ...nine[0], lastActivityAt: Date.now() / 1000 }, ...nine.slice(1)]
+    rerender(<MonitorView sessions={busy} />)
+    expect(getByTestId('dock').dataset.ids).toBe(before)
+  })
+
+  it('auto grid keeps a pinned pane over a newer session', () => {
+    stubResizeObserver(500, 310) // one slot
+    useMonitorStore.setState({ pinnedPaneIds: new Set(['old']) })
+    const sessions = [
+      makeLiveSession({ id: 'old', lastActivityAt: 100 }),
+      makeLiveSession({ id: 'new', lastActivityAt: Date.now() / 1000 }),
+    ]
+    const { container } = render(<MonitorView sessions={sessions} />)
+    expect(panes(container).map((p) => p.id)).toEqual(['old'])
   })
 })
 

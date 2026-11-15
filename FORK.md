@@ -90,8 +90,11 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
     at most 2 columns (the page is at most 1280px wide, panes at least 480px) and one row per ~304px of height, so
     a laptop window usually gets 2 or 4 panes where it showed 3–4 before, the last ones cut off; with more
     sessions than slots, the most recently active fill free slots, and a busier session takes the slot of the
-    quietest pane on screen only once that pane has been quiet 5 minutes (as upstream's auto-fill), so panes don't
-    trade places on every line written; a session waiting on you stays for those 5 minutes too; only the leaving
+    quietest pane on screen only once that pane's transcript has had no new line for 5 minutes, so panes don't
+    trade places on every line written (upstream's auto-fill instead counts from when a session started waiting,
+    and only in a fixed grid); a session busy on one long silent command (a build or test run over 5 minutes)
+    counts as quiet and can lose its pane; selecting a pane, or arriving from History with `?focus=`, doesn't
+    protect it; a session waiting on you stays for those 5 minutes too; only the leaving
     pane's terminal unmounts; pinned and "Move to front" panes are never swapped out; hiding a pane frees a slot;
     custom (dock) layouts and phones keep 8, and custom layouts never swap: their panels change only when a
     session ends, as upstream). The Board's Sort control ("Last activity", "Alphabetical", "Highest cost") still

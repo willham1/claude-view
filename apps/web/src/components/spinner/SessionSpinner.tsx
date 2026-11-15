@@ -32,6 +32,11 @@ interface LiveSpinnerProps extends BaseSpinnerProps {
   /** TTL (seconds) of the latest prompt-cache write: 3600 or 300; null = 300. */
   cacheTtlSeconds?: number | null
   lastTurnTaskSeconds?: number | null
+  /**
+   * The caller shows the model and the cache countdown on its own line (the
+   * Live Monitor card's details), so leave them out here.
+   */
+  detailsShownElsewhere?: boolean
 }
 
 interface HistoricalSpinnerProps extends BaseSpinnerProps {
@@ -136,9 +141,9 @@ export function SessionSpinner(props: SessionSpinnerProps) {
   // ---------------------------------------------------------------------------
   // Live mode
   // ---------------------------------------------------------------------------
-  const { durationSeconds, inputTokens, outputTokens, spinnerVerb } = props
+  const { durationSeconds, inputTokens, outputTokens, spinnerVerb, detailsShownElsewhere } = props
 
-  const shortModel = formatModelShort(model)
+  const shortModel = detailsShownElsewhere ? null : formatModelShort(model)
 
   // needs_you -> show completed task time if available, else "Awaiting input"
   // + cache countdown (only if lastCacheHitAt is set)
@@ -183,7 +188,7 @@ export function SessionSpinner(props: SessionSpinnerProps) {
             <span className="text-gray-500 dark:text-gray-400">Awaiting input</span>
           </>
         )}
-        {showCountdown ? (
+        {detailsShownElsewhere ? null : showCountdown ? (
           <CacheCountdownTooltip remaining={remaining} ttl={cacheTtl}>
             <span
               className={`font-mono tabular-nums cursor-default ${countdownColor}`}
@@ -249,7 +254,7 @@ export function SessionSpinner(props: SessionSpinnerProps) {
 // Cache Countdown Tooltip
 // ---------------------------------------------------------------------------
 
-function CacheCountdownTooltip({
+export function CacheCountdownTooltip({
   remaining,
   ttl,
   children,

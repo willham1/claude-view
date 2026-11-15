@@ -32,6 +32,7 @@ import { SourceBadge } from '../shared/SourceBadge'
 import { SessionSpinner, pickVerb } from '../spinner'
 import { ContextGauge } from './ContextGauge'
 import { CostTooltip } from './CostTooltip'
+import { SessionCardDetails } from './SessionCardDetails'
 import { TaskProgressList } from './TaskProgressList'
 import { hasUnavailableCost, unavailableCostReason } from './cost-display'
 import { getEffectiveBranch } from './effective-branch'
@@ -500,8 +501,8 @@ export function SessionCard({
         </p>
       )}
 
-      {/* ── Spinner ── */}
-      <div className="mb-2">
+      {/* ── Spinner (state line) ── */}
+      <div className="mb-1">
         <SessionSpinner
           mode="live"
           durationSeconds={elapsedSeconds}
@@ -515,8 +516,12 @@ export function SessionCard({
           lastCacheHitAt={session.lastCacheHitAt}
           cacheTtlSeconds={session.cacheTtlSeconds ?? null}
           lastTurnTaskSeconds={session.lastTurnTaskSeconds}
+          detailsShownElsewhere
         />
       </div>
+
+      {/* ── Details: model, effort, requests, turns, cache, context, helpers (every state) ── */}
+      <SessionCardDetails session={session} />
 
       {/* ── Pending interaction (permission, question, plan, elicitation) ── */}
       {session.pendingInteraction && (

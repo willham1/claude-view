@@ -336,6 +336,24 @@ export type LiveSession = {
    */
   cacheTtlSeconds: number | null
   /**
+   * Effort level (`low` … `max`) of the latest request that recorded one,
+   * from the top-level `effort` field on assistant lines. Omitted when unknown.
+   */
+  effort?: string | null
+  /**
+   * Context window fill (input + cache read + cache write tokens) of the
+   * session's first request with usage. 0 until one is seen.
+   */
+  startContextTokens: number
+  /**
+   * Largest context window fill of any request so far. 0 until one is seen.
+   */
+  peakContextTokens: number
+  /**
+   * Model requests seen in the transcript (deduplicated by message + request id).
+   */
+  requestCount: number
+  /**
    * Team name if this session is a team lead.
    * Populated from the top-level `teamName` field in the JSONL (present after TeamCreate).
    * Frontend uses this to show team badge instead of sub-agent pills.

@@ -76,8 +76,14 @@ pub(crate) struct SessionAccumulator {
     pub tokens: TokenUsage,
     /// Last assistant turn's total input tokens (= current context window fill).
     pub context_window_tokens: u64,
+    /// Context window fill of the first request with usage (0 until then).
+    pub start_context_tokens: u64,
+    /// Largest context window fill of any request so far.
+    pub peak_context_tokens: u64,
     /// Last parsed model ID.
     pub model: Option<String>,
+    /// Effort level of the latest request that recorded one.
+    pub effort: Option<String>,
     /// Number of user turns seen.
     pub user_turn_count: u32,
     /// The first non-meta user message (used as session title).
@@ -168,7 +174,10 @@ impl SessionAccumulator {
             offset: 0,
             tokens: TokenUsage::default(),
             context_window_tokens: 0,
+            start_context_tokens: 0,
+            peak_context_tokens: 0,
             model: None,
+            effort: None,
             user_turn_count: 0,
             first_user_message: String::new(),
             last_user_message: String::new(),
@@ -226,8 +235,12 @@ pub(super) struct JsonlMetadata {
     pub started_at: Option<i64>,
     pub last_activity_at: i64,
     pub model: Option<String>,
+    pub effort: Option<String>,
     pub tokens: TokenUsage,
     pub context_window_tokens: u64,
+    pub start_context_tokens: u64,
+    pub peak_context_tokens: u64,
+    pub request_count: u32,
     pub cost: CostBreakdown,
     pub cache_status: CacheStatus,
     pub current_turn_started_at: Option<i64>,
@@ -565,6 +578,10 @@ pub(super) fn apply_jsonl_metadata(
     }
     session.jsonl.tokens = m.tokens.clone();
     session.context_window_tokens = m.context_window_tokens;
+    session.jsonl.effort = m.effort.clone();
+    session.jsonl.start_context_tokens = m.start_context_tokens;
+    session.jsonl.peak_context_tokens = m.peak_context_tokens;
+    session.jsonl.request_count = m.request_count;
     session.jsonl.cost = m.cost.clone();
     session.jsonl.cache_status = m.cache_status.clone();
     session.hook.current_turn_started_at = m.current_turn_started_at;
@@ -639,8 +656,12 @@ pub(super) fn build_metadata_from_accumulator(
         started_at: acc.started_at,
         last_activity_at,
         model: acc.model.clone(),
+        effort: acc.effort.clone(),
         tokens: acc.tokens.clone(),
         context_window_tokens: acc.context_window_tokens,
+        start_context_tokens: acc.start_context_tokens,
+        peak_context_tokens: acc.peak_context_tokens,
+        request_count: u32::try_from(acc.seen_api_calls.len()).unwrap_or(u32::MAX),
         cost,
         cache_status,
         current_turn_started_at: acc.current_turn_started_at,

@@ -65,6 +65,9 @@ function createMockSession(overrides: Partial<LiveSession> = {}): LiveSession {
     toolsUsed: [],
     lastCacheHitAt: null,
     cacheTtlSeconds: null,
+    startContextTokens: 0,
+    peakContextTokens: 0,
+    requestCount: 0,
     compactCount: 0,
     slug: null,
     closedAt: null,
@@ -258,6 +261,133 @@ describe('SessionCard interaction display', () => {
     renderCard(session)
     // No interaction-related UI should be present
     expect(screen.queryByText(/Permission/i)).not.toBeInTheDocument()
+  })
+})
+
+// LM4: every card shows the same detail lines whatever the session's state,
+// at least what a helper's row in the Sub-Agents tab shows.
+describe('SessionCard details (LM4)', () => {
+  const nowSecs = Math.floor(Date.now() / 1000)
+  const detailed = {
+    model: 'claude-opus-5-5',
+    effort: 'xhigh',
+    contextWindowTokens: 50_000,
+    startContextTokens: 20_000,
+    peakContextTokens: 90_000,
+    requestCount: 42,
+    turnCount: 7,
+    lastCacheHitAt: nowSecs - 600,
+    cacheTtlSeconds: 3600,
+  } satisfies Partial<LiveSession>
+  const running = {
+    status: 'working',
+    agentState: { state: 'acting', group: 'autonomous', label: 'Working', context: null },
+  } satisfies Partial<LiveSession>
+  const awaiting = {
+    status: 'paused',
+    agentState: {
+      state: 'awaiting_input',
+      group: 'needs_you',
+      label: 'Waiting for your next message',
+      context: null,
+    },
+  } satisfies Partial<LiveSession>
+
+  for (const [name, state] of [
+    ['running', running],
+    ['awaiting input', awaiting],
+  ] as const) {
+    it(`shows model, effort, requests, turns, cache and context on a ${name} card`, () => {
+      renderCard(createMockSession({ ...detailed, ...state }))
+      expect(screen.getByTestId('card-model')).toHaveTextContent('Opus 5.5')
+      expect(screen.getByTestId('card-effort')).toHaveTextContent('xhigh effort')
+      const modelLine = screen.getByTestId('card-model-line')
+      expect(modelLine).toHaveTextContent('42 reqs')
+      expect(modelLine).toHaveTextContent('7 turns')
+      expect(screen.getByTestId('card-cache')).toHaveTextContent(/cache 50:\d\d left \(1h\)/)
+      const ctx = screen.getByTestId('card-context-line')
+      expect(ctx).toHaveTextContent('start 20.0k')
+      expect(ctx).toHaveTextContent('now 50.0k')
+      expect(ctx).toHaveTextContent('peak 90.0k')
+      expect(ctx).toHaveTextContent('1.0M')
+      expect(ctx).toHaveTextContent('5%')
+    })
+  }
+
+  it('shows the model once: the state line leaves it to the details', () => {
+    renderCard(createMockSession({ ...detailed, ...running }))
+    expect(screen.getAllByText(/Opus 5\.5|opus/i)).toHaveLength(1)
+  })
+
+  it('says the cache has expired, and shows a dash before any cache activity', () => {
+    const { unmount } = renderCard(
+      createMockSession({ ...detailed, ...awaiting, lastCacheHitAt: nowSecs - 7200 }),
+    )
+    expect(screen.getByTestId('card-cache')).toHaveTextContent('cache expired (1h)')
+    unmount()
+    renderCard(createMockSession({ ...detailed, ...awaiting, lastCacheHitAt: null }))
+    expect(screen.getByTestId('card-cache')).toHaveTextContent('cache –')
+  })
+
+  it('leaves out what is unknown: no effort, no requests, no context yet', () => {
+    renderCard(
+      createMockSession({
+        ...awaiting,
+        model: null,
+        effort: undefined,
+        requestCount: undefined as unknown as number,
+        contextWindowTokens: 0,
+        turnCount: 0,
+      }),
+    )
+    expect(screen.getByTestId('card-model')).toHaveTextContent('model –')
+    expect(screen.queryByTestId('card-effort')).not.toBeInTheDocument()
+    expect(screen.getByTestId('card-model-line')).not.toHaveTextContent('req')
+    expect(screen.queryByTestId('card-context-line')).not.toBeInTheDocument()
+  })
+
+  it('shows only "now" when the server reports no start or peak (older server)', () => {
+    renderCard(
+      createMockSession({
+        ...detailed,
+        ...running,
+        startContextTokens: 0,
+        peakContextTokens: 0,
+      }),
+    )
+    const ctx = screen.getByTestId('card-context-line')
+    expect(ctx).toHaveTextContent('now 50.0k')
+    expect(ctx).not.toHaveTextContent('start')
+    expect(ctx).not.toHaveTextContent('peak')
+  })
+
+  it('counts helpers by status', () => {
+    renderCard(
+      createMockSession({
+        ...detailed,
+        ...awaiting,
+        subAgents: [
+          {
+            toolUseId: 'a',
+            agentType: 'builder',
+            description: 'x',
+            status: 'running',
+            startedAt: 1,
+          },
+          {
+            toolUseId: 'b',
+            agentType: 'reviewer',
+            description: 'y',
+            status: 'complete',
+            startedAt: 1,
+          },
+          { toolUseId: 'c', agentType: 'Explore', description: 'z', status: 'error', startedAt: 1 },
+        ],
+      }),
+    )
+    expect(screen.getByTestId('card-helpers-line')).toHaveTextContent(
+      'helpers 1 running, 1 done, 1 failed',
+    )
   })
 })
 

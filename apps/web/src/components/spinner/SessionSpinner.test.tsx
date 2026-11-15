@@ -105,6 +105,37 @@ describe('SessionSpinner', () => {
     expect(dash.textContent).toContain('–')
   })
 
+  it('leaves model and countdown to the caller when it shows them elsewhere (LM4)', () => {
+    render(
+      <>
+        <SessionSpinner
+          mode="live"
+          model="claude-sonnet-4-20250514"
+          durationSeconds={42}
+          inputTokens={1200}
+          outputTokens={240}
+          agentStateGroup="needs_you"
+          lastCacheHitAt={Math.floor(Date.now() / 1000) - 30}
+          detailsShownElsewhere
+        />
+        <SessionSpinner
+          mode="live"
+          model="claude-sonnet-4-20250514"
+          durationSeconds={42}
+          inputTokens={1200}
+          outputTokens={240}
+          agentStateGroup="autonomous"
+          spinnerVerb="Working"
+          detailsShownElsewhere
+        />
+      </>,
+    )
+    expect(screen.getByText('Awaiting input')).toBeInTheDocument()
+    expect(screen.queryByTitle(/Cache warm|Cache cold|No cache activity yet/)).toBeNull()
+    expect(screen.getByText('Working…')).toBeInTheDocument()
+    expect(screen.queryByText(/sonnet/i)).toBeNull()
+  })
+
   it('stays warm 10 minutes after the last hit when the cache write was 1 hour', () => {
     renderNeedsYouSpinner(Math.floor(Date.now() / 1000) - 600, 3600)
     const trigger = screen.getByTitle('Cache warm')

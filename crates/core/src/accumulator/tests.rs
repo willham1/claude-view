@@ -18,6 +18,7 @@ mod tests {
             content_extended: String::new(),
             tool_names: Vec::new(),
             model: None,
+            effort: None,
             input_tokens: None,
             output_tokens: None,
             cache_read_tokens: None,

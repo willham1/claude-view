@@ -58,6 +58,22 @@ pub struct JsonlFields {
     /// Null until a write with a 5m/1h split is seen (treat as 300).
     #[ts(type = "number | null")]
     pub cache_ttl_seconds: Option<u32>,
+    /// Effort level (`low` … `max`) of the latest request that recorded one,
+    /// from the top-level `effort` field on assistant lines. Omitted when unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    /// Context window fill (input + cache read + cache write tokens) of the
+    /// session's first request with usage. 0 until one is seen.
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub start_context_tokens: u64,
+    /// Largest context window fill of any request so far. 0 until one is seen.
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub peak_context_tokens: u64,
+    /// Model requests seen in the transcript (deduplicated by message + request id).
+    #[serde(default)]
+    pub request_count: u32,
     /// Team name if this session is a team lead.
     /// Populated from the top-level `teamName` field in the JSONL (present after TeamCreate).
     /// Frontend uses this to show team badge instead of sub-agent pills.
@@ -118,6 +134,10 @@ impl Default for JsonlFields {
             last_turn_task_seconds: None,
             last_cache_hit_at: None,
             cache_ttl_seconds: None,
+            effort: None,
+            start_context_tokens: 0,
+            peak_context_tokens: 0,
+            request_count: 0,
             team_name: None,
             team_members: Vec::new(),
             team_inbox_count: 0,

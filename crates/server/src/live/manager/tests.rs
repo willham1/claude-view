@@ -1097,8 +1097,12 @@ fn minimal_jsonl_metadata() -> JsonlMetadata {
         started_at: None,
         last_activity_at: 0,
         model: None,
+        effort: None,
         tokens: TokenUsage::default(),
         context_window_tokens: 0,
+        start_context_tokens: 0,
+        peak_context_tokens: 0,
+        request_count: 0,
         cost: CostBreakdown::default(),
         cache_status: CacheStatus::Unknown,
         current_turn_started_at: None,
@@ -1632,4 +1636,58 @@ async fn test_session_found_without_transcript_uses_process_start() {
     let (manager, _rx, _snap) = super::reaper::tests::make_test_manager().await;
     let s = lm3_birth_through_coordinator(&manager, "lm3-none", started_secs * 1000, None).await;
     assert_eq!(s.hook.last_activity_at, started_secs);
+}
+
+/// Fork change 13 (LM4): the card's detail line reads effort, start / peak
+/// context and request count of the main session from its transcript.
+#[tokio::test]
+async fn test_main_session_effort_context_and_requests_from_transcript() {
+    use std::io::Write;
+    let tmp = tempfile::tempdir().unwrap();
+    let jsonl = tmp.path().join("lm4-detail.jsonl");
+    let mut f = std::fs::File::create(&jsonl).unwrap();
+    let assistant = |msg: &str, req: &str, effort: &str, input: u64, cache_read: u64| {
+        format!(
+            r#"{{"type":"assistant","requestId":"{req}",{effort}"message":{{"id":"{msg}","role":"assistant","model":"claude-opus-5-5","content":[{{"type":"text","text":"ok"}}],"usage":{{"input_tokens":{input},"output_tokens":10,"cache_read_input_tokens":{cache_read},"cache_creation_input_tokens":0}}}}}}"#
+        )
+    };
+    writeln!(
+        f,
+        r#"{{"type":"user","message":{{"role":"user","content":"hello"}}}}"#
+    )
+    .unwrap();
+    // Request 1: 20k context, high effort.
+    writeln!(
+        f,
+        "{}",
+        assistant("m1", "r1", r#""effort":"high","#, 20_000, 0)
+    )
+    .unwrap();
+    // The same request logged again (a second content block): not a new request.
+    writeln!(
+        f,
+        "{}",
+        assistant("m1", "r1", r#""effort":"high","#, 20_000, 0)
+    )
+    .unwrap();
+    // Request 2: the peak, 90k.
+    writeln!(
+        f,
+        "{}",
+        assistant("m2", "r2", r#""effort":"xhigh","#, 1_000, 89_000)
+    )
+    .unwrap();
+    // Request 3: 50k after a compaction, no effort recorded (keeps the last).
+    writeln!(f, "{}", assistant("m3", "r3", "", 50_000, 0)).unwrap();
+    f.flush().unwrap();
+    drop(f);
+
+    let started_ms = (super::helpers::unix_now() - 60) * 1000;
+    let (manager, _rx, _snap) = super::reaper::tests::make_test_manager().await;
+    let s = lm3_birth_through_coordinator(&manager, "lm4-detail", started_ms, Some(&jsonl)).await;
+    assert_eq!(s.context_window_tokens, 50_000);
+    assert_eq!(s.jsonl.start_context_tokens, 20_000);
+    assert_eq!(s.jsonl.peak_context_tokens, 90_000);
+    assert_eq!(s.jsonl.request_count, 3);
+    assert_eq!(s.jsonl.effort.as_deref(), Some("xhigh"));
 }

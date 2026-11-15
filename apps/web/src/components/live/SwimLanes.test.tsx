@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { type SubAgentContext, findSubAgentContext } from '../../hooks/use-subagent-context'
@@ -599,12 +599,16 @@ describe('subAgentActivity and the progress bar', () => {
     expect(subAgentActivity(undefined, now)).toBe('unknown')
   })
 
-  it('stops the bar animation once the cache has expired', () => {
+  const fill = (bar: HTMLElement) =>
+    bar.querySelector('[data-testid="subagent-progress-fill"]') as HTMLElement
+
+  it('colours the bar by state and stops it once the cache has expired', () => {
     const t = Math.floor(Date.now() / 1000)
     const agents = [
       makeSubAgent({ toolUseId: 't1', agentId: 'live1234' }),
       makeSubAgent({ toolUseId: 't2', agentId: 'idle1234' }),
       makeSubAgent({ toolUseId: 't3', agentId: 'dead1234' }),
+      makeSubAgent({ toolUseId: 't4', agentId: 'none1234' }),
     ]
     const contexts = [
       { ...ctx(t - 10), agentId: 'live1234' },
@@ -613,21 +617,103 @@ describe('subAgentActivity and the progress bar', () => {
     ]
     render(<SwimLanes subAgents={agents} contexts={contexts} />)
     const bars = screen.getAllByTestId('subagent-progress')
-    const byActivity = Object.fromEntries(
-      bars.map((b) => [b.dataset.activity, b.firstElementChild as HTMLElement]),
+    const byActivity = Object.fromEntries(bars.map((b) => [b.dataset.activity, b]))
+    expect(fill(byActivity.active).className).toContain('bg-blue-')
+    expect(fill(byActivity.active).style.animation).toContain('swimlane-progress')
+    expect(fill(byActivity.idle).className).toContain('bg-amber-')
+    expect(fill(byActivity.idle).style.animation).toContain('swimlane-progress')
+    expect(fill(byActivity.expired).className).toContain('bg-gray-')
+    expect(fill(byActivity.expired).style.animation).toBe('')
+    // No transcript data yet: the plain blue moving bar, as before this change.
+    expect(fill(byActivity.unknown).className).toContain('bg-blue-')
+    expect(fill(byActivity.unknown).style.animation).toContain('swimlane-progress')
+    expect(byActivity.idle.title).toMatch(/^Quiet/)
+    expect(byActivity.expired.title).toMatch(/^Stalled/)
+  })
+
+  it('colours the activity dot the same way and stops its pulse once the cache has expired', () => {
+    const t = Math.floor(Date.now() / 1000)
+    const agents = [
+      makeSubAgent({ toolUseId: 't1', agentId: 'live1234', currentActivity: 'Reading a file' }),
+      makeSubAgent({ toolUseId: 't2', agentId: 'idle1234', currentActivity: 'Running tests' }),
+      makeSubAgent({ toolUseId: 't3', agentId: 'dead1234', currentActivity: 'Running a build' }),
+    ]
+    const contexts = [
+      { ...ctx(t - 10), agentId: 'live1234' },
+      { ...ctx(t - 900), agentId: 'idle1234' },
+      { ...ctx(t - 5000), agentId: 'dead1234' },
+    ]
+    render(<SwimLanes subAgents={agents} contexts={contexts} />)
+    // A helper showing its current activity has the dot instead of the bar.
+    expect(screen.queryByTestId('subagent-progress')).toBeNull()
+    const dots = Object.fromEntries(
+      screen.getAllByTestId('subagent-activity-dot').map((d) => [d.dataset.activity, d]),
     )
-    expect(byActivity.active.className).toContain('bg-blue-500')
-    expect(byActivity.active.style.animation).toContain('swimlane-progress')
-    expect(byActivity.idle.className).toContain('bg-yellow-500')
-    expect(byActivity.idle.style.animation).toContain('swimlane-progress')
-    expect(byActivity.expired.style.animation).toBe('')
+    expect(dots.active.className).toContain('animate-pulse')
+    expect(dots.active.className).toContain('bg-blue-')
+    expect(dots.idle.className).toContain('animate-pulse')
+    expect(dots.idle.className).toContain('bg-amber-')
+    expect(dots.expired.className).not.toContain('animate-pulse')
+    expect(dots.expired.className).toContain('bg-gray-')
+  })
+
+  it('moves the bar from working to quiet to stopped as time passes, with no new data', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date(2_000_000_000_000))
+      const t = Math.floor(Date.now() / 1000)
+      const agents = [makeSubAgent({ toolUseId: 't1', agentId: 'live1234' })]
+      // 5-minute cache, latest request 10 s ago.
+      const contexts = [{ ...ctx(t - 10), agentId: 'live1234', cacheTtlSeconds: 300 }]
+      render(<SwimLanes subAgents={agents} contexts={contexts} />)
+      const bar = () => screen.getByTestId('subagent-progress')
+      expect(bar().dataset.activity).toBe('active')
+
+      act(() => {
+        vi.advanceTimersByTime(120_000)
+      })
+      expect(bar().dataset.activity).toBe('idle')
+      expect(fill(bar()).style.animation).toContain('swimlane-progress')
+
+      act(() => {
+        vi.advanceTimersByTime(180_000)
+      })
+      expect(bar().dataset.activity).toBe('expired')
+      expect(fill(bar()).style.animation).toBe('')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
 describe('agentTypeColor', () => {
-  it('gives builders and reviewers different colours, stable for unknown types', () => {
-    expect(agentTypeColor('builder')).not.toBe(agentTypeColor('reviewer'))
+  it('gives each named helper type its own colour', () => {
+    const named = ['builder', 'builder-browser', 'reviewer', 'senior-reviewer', 'Explore']
+    expect(new Set(named.map(agentTypeColor)).size).toBe(named.length)
+    expect(agentTypeColor('builder')).toContain('sky')
     expect(agentTypeColor('Explore')).toContain('emerald')
-    expect(agentTypeColor('custom-x')).toBe(agentTypeColor('custom-x'))
+    expect(agentTypeColor(' EXPLORE ')).toBe(agentTypeColor('explore'))
+  })
+
+  it("gives unknown types a colour from the fallback set, never a named type's or the error red", () => {
+    const named = ['builder', 'builder-browser', 'reviewer', 'senior-reviewer', 'Explore'].map(
+      agentTypeColor,
+    )
+    const unknown = ['custom-x', 'my-agent', 'statusline-setup', 'zz', 'a', 'data-cruncher']
+    const colours = unknown.map(agentTypeColor)
+    for (const c of colours) {
+      expect(c).toMatch(/^text-[a-z]+-\d+ dark:text-[a-z]+-\d+$/)
+      expect(named).not.toContain(c)
+      expect(c).not.toMatch(/red|rose/)
+    }
+    // Different names do land on different colours (not one constant).
+    expect(new Set(colours).size).toBeGreaterThan(1)
+    // Pinned value: the same name must keep its colour across reloads and releases.
+    expect(agentTypeColor('custom-x')).toBe('text-stone-600 dark:text-stone-300')
+  })
+
+  it('shows the type label in its colour', () => {
+    render(<SwimLanes subAgents={[makeSubAgent({ agentType: 'reviewer' })]} />)
+    expect(screen.getByTestId('subagent-type').className).toContain('text-violet-')
   })
 })

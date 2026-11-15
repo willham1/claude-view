@@ -125,9 +125,18 @@ pub fn common_post_mutation(
         _ => caller_pid,
     };
 
+    // Discovery is not activity (fork change 12): a Birth (pid.json seen, e.g.
+    // at server start) or a Reconcile (transcript seen) leaves the time the
+    // factory and the transcript gave the session. Stamping `now` here made
+    // every session found at startup look active at the server-start time.
+    let update_activity_at = match mutation {
+        SessionMutation::Birth(_) | SessionMutation::Reconcile(_) => None,
+        _ => Some(now),
+    };
+
     CommonPostMutation {
         bind_pid,
-        update_activity_at: Some(now),
+        update_activity_at,
     }
 }
 

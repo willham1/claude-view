@@ -72,12 +72,22 @@ pub fn create_session_from_birth(
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
 
+    // Last activity before the transcript is read: when the process started,
+    // never the discovery time (fork change 12). A session found at server
+    // start may have been idle for days; its transcript's modification time
+    // replaces this once the accumulator is applied. Capped at `now` so a
+    // clock skew can't put it in the future.
+    let started_secs = crate::live::manager::helpers::ms_to_secs(session.started_at);
+    let last_activity_at = if started_secs > 0 {
+        started_secs.min(now)
+    } else {
+        now
+    };
+
     LiveSession {
         id: session.session_id.clone(),
         status: SessionStatus::Working,
-        started_at: Some(crate::live::manager::helpers::ms_to_secs(
-            session.started_at,
-        )),
+        started_at: Some(started_secs),
         closed_at: None,
         control: None,
         model: None,
@@ -87,7 +97,7 @@ pub fn create_session_from_birth(
         statusline: StatuslineFields::default(),
         hook: HookFields {
             pid: Some(session.pid),
-            last_activity_at: now,
+            last_activity_at,
             title: session.name.clone().unwrap_or_default(),
             ..HookFields::default()
         },

@@ -194,6 +194,13 @@ impl SessionCoordinator {
                 for (buffered_mutation, buffered_hook_event) in buffered {
                     if let Some(session) = sessions.get_mut(session_id) {
                         apply_mutation_to_session(session, &buffered_mutation, now);
+                        // A buffered hook is real activity; the creating Birth
+                        // no longer stamps `now` (fork change 12), so stamp it here.
+                        if let Some(activity_at) =
+                            common_post_mutation(&buffered_mutation, None, now).update_activity_at
+                        {
+                            session.hook.last_activity_at = activity_at;
+                        }
                         // Replay buffered hook event with the session's actual group
                         if let Some(mut event) = buffered_hook_event {
                             let actual_group = match session.hook.agent_state.group {

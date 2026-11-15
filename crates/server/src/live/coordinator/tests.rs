@@ -1371,4 +1371,214 @@ mod tests {
             "Side-map must be cleared after Interaction::Clear"
         );
     }
+
+    // =========================================================================
+    // Fork change 12 (LM3): discovery is not activity
+    // =========================================================================
+
+    fn lm3_active(
+        session_id: &str,
+        started_at_ms: i64,
+    ) -> claude_view_core::session_files::ActiveSession {
+        claude_view_core::session_files::ActiveSession {
+            pid: 4242,
+            session_id: session_id.to_string(),
+            cwd: "/tmp/lm3-project".to_string(),
+            started_at: started_at_ms,
+            kind: "interactive".to_string(),
+            entrypoint: "cli".to_string(),
+            name: None,
+        }
+    }
+
+    async fn lm3_handle(
+        coordinator: &SessionCoordinator,
+        sessions: &LiveSessionMap,
+        session_id: &str,
+        mutation: SessionMutation,
+        now: i64,
+    ) -> MutationResult {
+        let (live_tx, _rx) = broadcast::channel(16);
+        let db = claude_view_db::Database::new_in_memory()
+            .await
+            .expect("in-memory DB");
+        let transcript_to_session: TranscriptMap = Arc::new(RwLock::new(HashMap::new()));
+        let hook_event_channels: Arc<RwLock<HashMap<String, broadcast::Sender<HookEvent>>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+        let interaction_data: Arc<RwLock<HashMap<String, claude_view_types::InteractionBlock>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+        let ctx = MutationContext {
+            sessions,
+            live_tx: &live_tx,
+            live_manager: None,
+            db: &db,
+            transcript_to_session: &transcript_to_session,
+            hook_event_channels: &hook_event_channels,
+            interaction_data: &interaction_data,
+        };
+        coordinator
+            .handle(
+                &ctx,
+                session_id,
+                mutation,
+                Some(4242),
+                now,
+                None,
+                Some("/tmp/lm3-project"),
+                None,
+                None,
+            )
+            .await
+    }
+
+    #[test]
+    fn birth_activity_is_process_start_not_discovery_time() {
+        use crate::live::coordinator::session_factory::create_session_from_birth;
+        // Process started a day before the server found it.
+        let session =
+            create_session_from_birth(&lm3_active("lm3-a", 1_700_000_000_000), 1_700_086_400);
+        assert_eq!(session.hook.last_activity_at, 1_700_000_000);
+    }
+
+    #[test]
+    fn birth_activity_falls_back_to_now_without_start_time() {
+        use crate::live::coordinator::session_factory::create_session_from_birth;
+        let session = create_session_from_birth(&lm3_active("lm3-b", 0), 1_700_086_400);
+        assert_eq!(session.hook.last_activity_at, 1_700_086_400);
+    }
+
+    #[test]
+    fn birth_activity_never_in_the_future() {
+        use crate::live::coordinator::session_factory::create_session_from_birth;
+        // pid.json clock ahead of ours: capped at now.
+        let session =
+            create_session_from_birth(&lm3_active("lm3-c", 1_700_000_100_000), 1_700_000_000);
+        assert_eq!(session.hook.last_activity_at, 1_700_000_000);
+    }
+
+    #[test]
+    fn discovery_mutations_do_not_stamp_activity() {
+        let birth = SessionMutation::Birth(lm3_active("lm3-d", 1_700_000_000_000));
+        assert_eq!(
+            common_post_mutation(&birth, None, 1_700_086_400).update_activity_at,
+            None
+        );
+        let reconcile = SessionMutation::Reconcile(Box::new(ReconcileData {
+            project: None,
+            project_display_name: None,
+            project_path: None,
+            model: None,
+            model_display_name: None,
+            tokens: None,
+            context_window_tokens: None,
+            cost: None,
+            turn_count: None,
+            edit_count: None,
+            phase: None,
+        }));
+        assert_eq!(
+            common_post_mutation(&reconcile, None, 1_700_086_400).update_activity_at,
+            None
+        );
+        // A hook is real activity and still stamps now.
+        let prompt = SessionMutation::Lifecycle(LifecycleEvent::Prompt {
+            text: "hi".into(),
+            pid: None,
+        });
+        assert_eq!(
+            common_post_mutation(&prompt, None, 1_700_086_400).update_activity_at,
+            Some(1_700_086_400)
+        );
+    }
+
+    #[tokio::test]
+    async fn session_found_at_startup_keeps_its_older_time() {
+        let coordinator = SessionCoordinator::new();
+        let sessions: LiveSessionMap = Arc::new(RwLock::new(HashMap::new()));
+        let result = lm3_handle(
+            &coordinator,
+            &sessions,
+            "lm3-e",
+            SessionMutation::Birth(lm3_active("lm3-e", 1_700_000_000_000)),
+            1_700_086_400,
+        )
+        .await;
+        assert!(matches!(result, MutationResult::Created(_)));
+        let map = sessions.read().await;
+        assert_eq!(
+            map.get("lm3-e").unwrap().hook.last_activity_at,
+            1_700_000_000,
+            "a session found at startup must not get the server-start time"
+        );
+    }
+
+    #[tokio::test]
+    async fn repeated_birth_does_not_bump_activity() {
+        let coordinator = SessionCoordinator::new();
+        let sessions: LiveSessionMap = Arc::new(RwLock::new(HashMap::new()));
+        let active = lm3_active("lm3-f", 1_700_000_000_000);
+        lm3_handle(
+            &coordinator,
+            &sessions,
+            "lm3-f",
+            SessionMutation::Birth(active.clone()),
+            1_700_000_500,
+        )
+        .await;
+        sessions
+            .write()
+            .await
+            .get_mut("lm3-f")
+            .unwrap()
+            .hook
+            .last_activity_at = 1_700_000_200;
+        lm3_handle(
+            &coordinator,
+            &sessions,
+            "lm3-f",
+            SessionMutation::Birth(active),
+            1_700_086_400,
+        )
+        .await;
+        assert_eq!(
+            sessions
+                .read()
+                .await
+                .get("lm3-f")
+                .unwrap()
+                .hook
+                .last_activity_at,
+            1_700_000_200
+        );
+    }
+
+    #[tokio::test]
+    async fn buffered_hook_drained_at_birth_still_counts_as_activity() {
+        let coordinator = SessionCoordinator::new();
+        let sessions: LiveSessionMap = Arc::new(RwLock::new(HashMap::new()));
+        let prompt = SessionMutation::Lifecycle(LifecycleEvent::Prompt {
+            text: "hi".into(),
+            pid: None,
+        });
+        let buffered = lm3_handle(&coordinator, &sessions, "lm3-g", prompt, 1_700_086_300).await;
+        assert!(matches!(buffered, MutationResult::Buffered));
+        lm3_handle(
+            &coordinator,
+            &sessions,
+            "lm3-g",
+            SessionMutation::Birth(lm3_active("lm3-g", 1_700_000_000_000)),
+            1_700_086_400,
+        )
+        .await;
+        assert_eq!(
+            sessions
+                .read()
+                .await
+                .get("lm3-g")
+                .unwrap()
+                .hook
+                .last_activity_at,
+            1_700_086_400
+        );
+    }
 }

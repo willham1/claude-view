@@ -174,8 +174,11 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
     else what the parent transcript reported; team sessions count their member sidechains instead, never both.
     The page fetches all of it in one request every 5 s, `GET /api/sessions/subagents/costs?ids=…` (sessions with
     helpers only), which reuses change 2's per-file cache, so only transcripts that grew are read again. The
-    card's hover breakdown lists the same per-helper figures. A project group header on the Board and in Harness
-    shows the sum of its active cards' totals; the "cost" sort (of groups and in the List view) still uses the figure it used before.
+    card's hover breakdown lists the same per-helper figures. A project group header shows the sum of the totals
+    of the cards under it: on the Board its active cards (not the recently closed ones, as its count); in Harness
+    only the cards in that phase group's rows (sessions in the Needs You sidebar are left out, as in its count).
+    Before, a Harness header showed the whole project's figure. The "cost" sort (of groups and in the List view)
+    still uses the figure it used before.
     Until the first answer arrives (a moment after opening the page), a card shows the parent-reported figure.
 
 ## Running it

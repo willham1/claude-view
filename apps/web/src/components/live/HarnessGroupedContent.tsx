@@ -90,7 +90,11 @@ export function HarnessGroupedContent({
             <ProjectHeader
               projectName={project.projectName}
               projectPath={project.projectPath}
-              totalCostUsd={projectCostWithHelpers(project, helperCosts, helperSidechains)}
+              totalCostUsd={projectCostWithHelpers(
+                { branches: filteredBranches },
+                helperCosts,
+                helperSidechains,
+              )}
               sessionCount={pCount}
               isCollapsed={pCollapsed}
               onToggle={() => toggleCollapse(pKey)}

@@ -3629,6 +3629,36 @@
         }
       }
     },
+    "/api/sessions/subagents/costs": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "GET /api/sessions/subagents/costs?ids=a,b,c — per sub-agent cost for many\nsessions at once, so the Live Monitor's cards can show each session's total\n(main session plus helpers) with one request. Uses the same per-file cache\nas the context endpoint: a poll re-parses only transcripts that grew.\nSessions that cannot be found are left out.",
+        "operationId": "get_subagent_costs",
+        "parameters": [
+          {
+            "name": "ids",
+            "in": "query",
+            "description": "Comma-separated parent session IDs",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Per sub-agent cost, keyed by session ID",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/sessions/unarchive": {
       "post": {
         "tags": [

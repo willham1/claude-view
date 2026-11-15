@@ -668,6 +668,30 @@ mod tests {
     }
 
     #[test]
+    fn test_task_notification_copies_share_a_fingerprint() {
+        let finders = TailFinders::new();
+        let fp = |raw: String| {
+            parse_single_line(raw.as_bytes(), &finders)
+                .sub_agent_notification
+                .expect("notice")
+                .fingerprint
+        };
+        let queued = |n: &str| {
+            format!(
+                r#"{{"type":"queue-operation","operation":"enqueue","timestamp":"2026-11-15T06:19:46.501Z","content":"{n}"}}"#
+            )
+        };
+        let attached = |n: &str| {
+            format!(
+                r#"{{"type":"attachment","timestamp":"2026-11-15T06:19:48.000Z","attachment":{{"type":"queued_command","prompt":"{n}"}}}}"#
+            )
+        };
+        let fresh = QUEUED_NOTICE.replace("</summary>", "</summary>\\n<result>again</result>");
+        assert_eq!(fp(queued(QUEUED_NOTICE)), fp(attached(QUEUED_NOTICE)));
+        assert_ne!(fp(queued(QUEUED_NOTICE)), fp(queued(&fresh)));
+    }
+
+    #[test]
     fn test_task_notification_not_read_from_other_line_types() {
         let finders = TailFinders::new();
         // An assistant quoting a notice, and an attachment that is not a queued command.

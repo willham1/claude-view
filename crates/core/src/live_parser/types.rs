@@ -67,6 +67,11 @@ pub struct SubAgentNotification {
     pub agent_id: String,
     /// The completion status: "completed", "failed", or "killed".
     pub status: String,
+    /// Hash of the `<task-notification>…</task-notification>` block. Claude
+    /// Code writes one hand-back up to three times (queue-operation enqueue
+    /// and remove, queued_command attachment), byte-identical; a fresh
+    /// hand-back differs (new result and usage). Lets a copy be told apart.
+    pub fingerprint: u64,
 }
 
 /// Extracted from a toolUseResult on a user line (Task completion).

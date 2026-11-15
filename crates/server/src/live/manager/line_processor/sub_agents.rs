@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 
 use claude_view_core::pricing::{calculate_cost, ModelPricing, TokenUsage};
-use claude_view_core::subagent::{SubAgentInfo, SubAgentStatus};
+use claude_view_core::subagent::{
+    apply_task_notification_once, resume_agent, SubAgentInfo, SubAgentStatus,
+};
 
 use super::super::accumulator::SessionAccumulator;
 use super::super::helpers::parse_timestamp_to_unix;
@@ -127,27 +129,17 @@ pub(super) fn process_sub_agents(
 
     // Background agent completion via <task-notification>
     if let Some(ref notif) = line.sub_agent_notification {
-        if let Some(agent) = acc
-            .sub_agents
-            .iter_mut()
-            .find(|a| a.agent_id.as_deref() == Some(&notif.agent_id))
-        {
-            agent.apply_task_notification(
-                &notif.status,
-                line.timestamp.as_deref().and_then(parse_timestamp_to_unix),
-            );
-        }
+        apply_task_notification_once(
+            &mut acc.sub_agents,
+            &mut acc.applied_notices,
+            notif,
+            line.timestamp.as_deref().and_then(parse_timestamp_to_unix),
+        );
     }
 
     // A SendMessage resumed a helper that had handed back: working again.
     if let Some(ref id) = line.resumed_agent_id {
-        if let Some(agent) = acc
-            .sub_agents
-            .iter_mut()
-            .find(|a| a.agent_id.as_deref() == Some(id.as_str()))
-        {
-            agent.resume();
-        }
+        resume_agent(&mut acc.sub_agents, id);
     }
 }
 
@@ -248,6 +240,20 @@ mod tests {
         assert_eq!(a.status, SubAgentStatus::Running);
         assert_eq!(a.completed_at, None);
 
+        // The old hand-back's remove and attachment copies, written after the
+        // resume, must not finish the resumed helper.
+        feed(
+            &mut acc,
+            &queued("2026-11-15T06:30:46.000Z", "remove", NOTICE),
+        );
+        feed(
+            &mut acc,
+            &format!(
+                r#"{{"type":"attachment","timestamp":"2026-11-15T06:30:46.500Z","attachment":{{"type":"queued_command","prompt":"{NOTICE}"}}}}"#
+            ),
+        );
+        assert_eq!(acc.sub_agents[0].status, SubAgentStatus::Running);
+
         // Waiting on its own background work is not a hand-back.
         let waiting = NOTICE.replace("finished", "is waiting on its own background work");
         feed(
@@ -256,9 +262,11 @@ mod tests {
         );
         assert_eq!(acc.sub_agents[0].status, SubAgentStatus::Running);
 
+        // A fresh hand-back carries a new result, so its text differs.
+        let second = NOTICE.replace("</summary>", "</summary>\\n<result>Ready: PR #1</result>");
         feed(
             &mut acc,
-            &queued("2026-11-15T06:50:00.000Z", "enqueue", NOTICE),
+            &queued("2026-11-15T06:50:00.000Z", "enqueue", &second),
         );
         let a = &acc.sub_agents[0];
         assert_eq!(a.status, SubAgentStatus::Complete);

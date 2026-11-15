@@ -41,6 +41,9 @@ pub struct SessionAccumulator {
     /// tokens/cost multiple times when Claude Code splits one API response into
     /// multiple JSONL lines (one per content block: thinking, text, tool_use).
     pub(crate) seen_api_calls: HashSet<String>,
+    /// Fingerprints of `<task-notification>`s already applied, so the later
+    /// copies of one hand-back don't finish a helper the lead resumed.
+    pub(crate) applied_notices: HashSet<u64>,
     // Phase fields will be added in Task 8 (oMLX classification wiring)
     /// Phase labels emitted so far (one per classification).
     pub(crate) phase_labels: Vec<PhaseLabel>,
@@ -96,6 +99,7 @@ impl SessionAccumulator {
             slug: None,
             accumulated_cost: CostBreakdown::default(),
             seen_api_calls: HashSet::new(),
+            applied_notices: HashSet::new(),
             phase_labels: Vec::new(),
         }
     }

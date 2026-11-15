@@ -534,6 +534,7 @@ mod tests {
         notif_line.sub_agent_notification = Some(crate::live_parser::SubAgentNotification {
             agent_id: "ab897bc".to_string(),
             status: "completed".to_string(),
+            fingerprint: 1,
         });
         acc.process_line(&notif_line, 0, &pricing);
 
@@ -589,6 +590,7 @@ mod tests {
         notif_line.sub_agent_notification = Some(crate::live_parser::SubAgentNotification {
             agent_id: "afailed1".to_string(),
             status: "failed".to_string(),
+            fingerprint: 1,
         });
         acc.process_line(&notif_line, 0, &pricing);
 
@@ -643,6 +645,7 @@ mod tests {
         notif_line.sub_agent_notification = Some(crate::live_parser::SubAgentNotification {
             agent_id: "akilled1".to_string(),
             status: "killed".to_string(),
+            fingerprint: 1,
         });
         acc.process_line(&notif_line, 0, &pricing);
 
@@ -939,6 +942,7 @@ mod tests {
         notif_line.sub_agent_notification = Some(crate::live_parser::SubAgentNotification {
             agent_id: "anterm1".to_string(),
             status: "timed_out".to_string(),
+            fingerprint: 1,
         });
         acc.process_line(&notif_line, 0, &pricing);
 
@@ -1681,6 +1685,80 @@ mod tests {
         assert_eq!(
             acc.sub_agents[0].error_reason, None,
             "completed subagent must have no error_reason"
+        );
+    }
+
+    /// Lines shaped like a real lead transcript (Claude Code, Nov 2026). The
+    /// lead resumes the helper after the hand-back's `enqueue` copy but before
+    /// its `remove` and `attachment` copies are written: those copies must not
+    /// finish the resumed helper, and its next hand-back must.
+    #[test]
+    fn test_resume_between_copies_of_a_hand_back() {
+        use crate::live_parser::{parse_single_line, TailFinders};
+        let finders = TailFinders::new();
+        let mut acc = SessionAccumulator::new();
+        let pricing = HashMap::new();
+        let feed = |acc: &mut SessionAccumulator, raw: &str| {
+            acc.process_line(&parse_single_line(raw.as_bytes(), &finders), 0, &pricing);
+        };
+        let notice = |result: &str| {
+            format!(
+                r#"<task-notification>\n<task-id>ad660c61</task-id>\n<tool-use-id>toolu_sp</tool-use-id>\n<status>completed</status>\n<summary>Agent \"Build X\" finished</summary>\n<result>{result}</result>\n</task-notification>"#
+            )
+        };
+        let queued = |ts: &str, op: &str, n: &str| {
+            format!(
+                r#"{{"type":"queue-operation","operation":"{op}","timestamp":"{ts}","content":"{n}"}}"#
+            )
+        };
+
+        feed(
+            &mut acc,
+            r#"{"type":"assistant","timestamp":"2026-11-15T06:00:00.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_sp","name":"Agent","input":{"description":"Build X","subagent_type":"builder","prompt":"go","run_in_background":true}}]}}"#,
+        );
+        feed(
+            &mut acc,
+            r#"{"type":"user","timestamp":"2026-11-15T06:00:01.000Z","message":{"role":"user","content":[{"tool_use_id":"toolu_sp","type":"tool_result","content":[{"type":"text","text":"Async agent launched successfully."}]}]},"toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"ad660c61"}}"#,
+        );
+        let first = notice("Task done: PR #1");
+        feed(
+            &mut acc,
+            &queued("2026-11-15T06:10:00.000Z", "enqueue", &first),
+        );
+        assert_eq!(acc.sub_agents[0].status, SubAgentStatus::Complete);
+
+        feed(
+            &mut acc,
+            r#"{"type":"user","timestamp":"2026-11-15T06:10:05.000Z","message":{"role":"user","content":[{"tool_use_id":"toolu_send","type":"tool_result","content":[{"type":"text","text":"{\"success\":true}"}]}]},"toolUseResult":{"success":true,"message":"Resuming agent ad660c6","resumedAgentId":"ad660c61"}}"#,
+        );
+        assert_eq!(acc.sub_agents[0].status, SubAgentStatus::Running);
+
+        feed(
+            &mut acc,
+            &queued("2026-11-15T06:10:06.000Z", "remove", &first),
+        );
+        feed(
+            &mut acc,
+            &format!(
+                r#"{{"type":"attachment","timestamp":"2026-11-15T06:10:06.500Z","attachment":{{"type":"queued_command","prompt":"{first}"}}}}"#
+            ),
+        );
+        assert_eq!(
+            acc.sub_agents[0].status,
+            SubAgentStatus::Running,
+            "late copies of the old hand-back must not finish a resumed helper"
+        );
+
+        let second = notice("Ready: PR #1 (fixed)");
+        feed(
+            &mut acc,
+            &queued("2026-11-15T06:40:00.000Z", "enqueue", &second),
+        );
+        let a = &acc.sub_agents[0];
+        assert_eq!(a.status, SubAgentStatus::Complete);
+        assert_eq!(
+            a.completed_at,
+            parse_timestamp_to_unix("2026-11-15T06:40:00.000Z")
         );
     }
 }

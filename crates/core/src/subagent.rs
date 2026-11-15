@@ -154,6 +154,40 @@ impl SubAgentInfo {
     }
 }
 
+/// Apply a `<task-notification>` to the agent it names, once per notice.
+///
+/// Claude Code writes one hand-back up to three times (queue-operation
+/// enqueue and remove, queued_command attachment). The lead can resume the
+/// helper between the first copy and the others, so a later copy must not
+/// mark the resumed helper finished: copies already seen (same fingerprint)
+/// are skipped. `applied` is the caller's per-session set of seen notices.
+pub fn apply_task_notification_once(
+    agents: &mut [SubAgentInfo],
+    applied: &mut std::collections::HashSet<u64>,
+    notif: &crate::live_parser::SubAgentNotification,
+    at: Option<i64>,
+) {
+    let Some(agent) = agents
+        .iter_mut()
+        .find(|a| a.agent_id.as_deref() == Some(notif.agent_id.as_str()))
+    else {
+        return;
+    };
+    if applied.insert(notif.fingerprint) {
+        agent.apply_task_notification(&notif.status, at);
+    }
+}
+
+/// A SendMessage resumed the agent with this id (`toolUseResult.resumedAgentId`).
+pub fn resume_agent(agents: &mut [SubAgentInfo], agent_id: &str) {
+    if let Some(agent) = agents
+        .iter_mut()
+        .find(|a| a.agent_id.as_deref() == Some(agent_id))
+    {
+        agent.resume();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

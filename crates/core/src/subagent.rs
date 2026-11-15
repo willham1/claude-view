@@ -126,6 +126,32 @@ impl SubAgentInfo {
             self.error_reason = Some(reason.to_string());
         }
     }
+
+    /// Apply a `<task-notification>` hand-back: "completed" marks the agent
+    /// Complete, any other status Error with that status as the reason.
+    /// Only a Running agent changes, so the copies Claude Code writes of one
+    /// notice (queue-operation enqueue/remove, attachment) keep the first time.
+    pub fn apply_task_notification(&mut self, status: &str, at: Option<i64>) {
+        if self.status != SubAgentStatus::Running {
+            return;
+        }
+        if status == "completed" {
+            self.status = SubAgentStatus::Complete;
+        } else {
+            self.status = SubAgentStatus::Error;
+            self.error_reason = Some(status.to_string());
+        }
+        self.completed_at = at;
+        self.current_activity = None;
+    }
+
+    /// A SendMessage resumed this agent after it handed back: it is working
+    /// again until its next notification.
+    pub fn resume(&mut self) {
+        self.status = SubAgentStatus::Running;
+        self.completed_at = None;
+        self.error_reason = None;
+    }
 }
 
 #[cfg(test)]

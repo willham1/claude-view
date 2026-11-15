@@ -53,6 +53,7 @@ pub fn parse_single_line(raw: &[u8], finders: &TailFinders) -> LiveLine {
                 sub_agent_result: None,
                 sub_agent_progress: None,
                 sub_agent_notification: None,
+                resumed_agent_id: None,
                 todo_write: None,
                 task_creates: Vec::new(),
                 task_updates: Vec::new(),
@@ -151,9 +152,35 @@ pub fn parse_single_line(raw: &[u8], finders: &TailFinders) -> LiveLine {
     };
 
     // --- Background agent completion notification ---
-    let sub_agent_notification =
-        if line_type == LineType::User && finders.task_notification_key.find(raw).is_some() {
-            extract_task_notification(content_source)
+    // Claude Code delivers a helper's hand-back notice as a queued command: a
+    // `queue-operation` line (`content`) and an `attachment` line of type
+    // `queued_command` (`attachment.prompt`). Older versions wrote it as a
+    // plain user line. Read all three, or finished helpers stay "running".
+    let sub_agent_notification = if finders.task_notification_key.find(raw).is_some() {
+        match parsed.get("type").and_then(|t| t.as_str()) {
+            Some("user") | Some("queue-operation") => extract_task_notification(content_source),
+            Some("attachment") => parsed
+                .get("attachment")
+                .filter(|a| a.get("type").and_then(|t| t.as_str()) == Some("queued_command"))
+                .and_then(|a| a.get("prompt"))
+                .filter(|p| p.is_string())
+                .and_then(|p| extract_task_notification(&serde_json::json!({ "content": p }))),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    // --- Helper resumed by SendMessage (user lines with toolUseResult.resumedAgentId) ---
+    let resumed_agent_id =
+        if line_type == LineType::User && finders.tool_use_result_key.find(raw).is_some() {
+            parsed
+                .get("toolUseResult")
+                .filter(|r| r.get("success").and_then(|s| s.as_bool()) != Some(false))
+                .and_then(|r| r.get("resumedAgentId"))
+                .and_then(|id| id.as_str())
+                .filter(|id| !id.is_empty())
+                .map(String::from)
         } else {
             None
         };
@@ -389,6 +416,7 @@ pub fn parse_single_line(raw: &[u8], finders: &TailFinders) -> LiveLine {
         sub_agent_result,
         sub_agent_progress,
         sub_agent_notification,
+        resumed_agent_id,
         todo_write,
         task_creates,
         task_updates,

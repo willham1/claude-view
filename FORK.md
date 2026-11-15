@@ -163,9 +163,19 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
     - **"turns" is not your prompt count:** it is upstream's turn count, which with hooks off counts every user
       line in the transcript, tool results and task notices included, so it often sits close to the request
       count. The hover says so.
-    - **"helpers N running" can be too high:** it is the status the server reports, and some background helpers
-      are never marked finished, so an idle session can read "helpers 31 running". The Sub-Agents tab's bars
-      (change 9) show which are really working.
+    - **"helpers N running"** is the status the server reports; change 14 made it right for background helpers.
+
+14. **Finished helpers show as finished (LM6):** Claude Code now writes a background helper's hand-back
+    (`<task-notification>`) as a queued command, a `queue-operation` line and a `queued_command` attachment line,
+    no longer as a user line, and upstream read only user lines. So almost every background helper stayed
+    "running" for good: one lead session with 28 helpers, 26 of them finished, showed "27 running, 1 done" on its
+    card and a green dot on every helper in the Sub-Agents tab. Both line forms are read now (the copies of one
+    notice keep the first time as the finish time). A helper the lead resumes with SendMessage (its result carries
+    `resumedAgentId`) shows as running again until its next hand-back, and a notice saying the helper "is waiting
+    on its own background work" no longer counts as finished (`live_parser/parse_line.rs`, `content.rs`,
+    `subagent.rs`, `line_processor/sub_agents.rs`). The same session now reads "2 running, 26 done", matching each
+    helper's `meta.json`. The card's helpers line, the Sub-Agents tab's strip, rows and dots all follow. How a
+    session's own state or column is decided (change 11) is unchanged.
 
 ## Running it
 

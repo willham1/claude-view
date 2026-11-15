@@ -629,6 +629,96 @@ mod tests {
         assert!(lines[0].sub_agent_notification.is_none());
     }
 
+    // Claude Code now writes a helper's hand-back as a queued command (shapes
+    // copied from a real lead transcript, paths shortened).
+    const QUEUED_NOTICE: &str = r#"<task-notification>\n<task-id>a5ac2a04b0b24c9a8</task-id>\n<tool-use-id>toolu_012ds</tool-use-id>\n<output-file>/tmp/x.output</output-file>\n<status>completed</status>\n<summary>Agent \"Build RW8b\" finished</summary>\n<note>A task-notification fires each time this agent stops.</note>\n</task-notification>"#;
+
+    #[test]
+    fn test_task_notification_on_queue_operation_line() {
+        let finders = TailFinders::new();
+        for op in ["enqueue", "remove"] {
+            let raw = format!(
+                r#"{{"type":"queue-operation","operation":"{op}","timestamp":"2026-11-15T06:19:46.501Z","sessionId":"s1","content":"{QUEUED_NOTICE}"}}"#
+            );
+            let line = parse_single_line(raw.as_bytes(), &finders);
+            let notif = line
+                .sub_agent_notification
+                .as_ref()
+                .expect("queue-operation notice must be read");
+            assert_eq!(notif.agent_id, "a5ac2a04b0b24c9a8");
+            assert_eq!(notif.status, "completed");
+            assert_eq!(line.timestamp.as_deref(), Some("2026-11-15T06:19:46.501Z"));
+        }
+    }
+
+    #[test]
+    fn test_task_notification_on_queued_command_attachment() {
+        let finders = TailFinders::new();
+        let raw = format!(
+            r#"{{"parentUuid":"p1","isSidechain":false,"attachment":{{"type":"queued_command","prompt":"{}","commandMode":"task-notification"}},"type":"attachment","timestamp":"2026-11-15T06:19:47.200Z"}}"#,
+            QUEUED_NOTICE.replace("completed", "failed")
+        );
+        let line = parse_single_line(raw.as_bytes(), &finders);
+        let notif = line
+            .sub_agent_notification
+            .as_ref()
+            .expect("attachment notice must be read");
+        assert_eq!(notif.agent_id, "a5ac2a04b0b24c9a8");
+        assert_eq!(notif.status, "failed");
+    }
+
+    #[test]
+    fn test_task_notification_not_read_from_other_line_types() {
+        let finders = TailFinders::new();
+        // An assistant quoting a notice, and an attachment that is not a queued command.
+        let assistant = format!(
+            r#"{{"type":"assistant","message":{{"role":"assistant","content":[{{"type":"text","text":"{QUEUED_NOTICE}"}}]}}}}"#
+        );
+        let other_attachment = format!(
+            r#"{{"type":"attachment","attachment":{{"type":"edited_text_file","prompt":"{QUEUED_NOTICE}"}}}}"#
+        );
+        for raw in [assistant, other_attachment] {
+            let line = parse_single_line(raw.as_bytes(), &finders);
+            assert!(line.sub_agent_notification.is_none(), "{raw}");
+        }
+    }
+
+    #[test]
+    fn test_task_notification_waiting_on_own_background_work_is_not_completion() {
+        let finders = TailFinders::new();
+        let notice = QUEUED_NOTICE.replace(
+            r#"finished</summary>"#,
+            r#"is waiting on its own background work</summary>"#,
+        );
+        let queued =
+            format!(r#"{{"type":"queue-operation","operation":"enqueue","content":"{notice}"}}"#);
+        let user = format!(r#"{{"type":"user","message":{{"role":"user","content":"{notice}"}}}}"#);
+        for raw in [queued, user] {
+            let line = parse_single_line(raw.as_bytes(), &finders);
+            assert!(line.sub_agent_notification.is_none(), "{raw}");
+        }
+    }
+
+    #[test]
+    fn test_resumed_agent_id_from_send_message_result() {
+        let finders = TailFinders::new();
+        let ok = r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"{\"success\":true}"}]}]},"toolUseResult":{"success":true,"message":"Resuming agent afa653f","resumedAgentId":"afa653f47de92748e","revivedAgentId":"afa653f47de92748e"}}"#;
+        let line = parse_single_line(ok.as_bytes(), &finders);
+        assert_eq!(line.resumed_agent_id.as_deref(), Some("afa653f47de92748e"));
+
+        let failed = ok.replace(
+            r#""success":true,"message""#,
+            r#""success":false,"message""#,
+        );
+        let line = parse_single_line(failed.as_bytes(), &finders);
+        assert!(line.resumed_agent_id.is_none());
+
+        let plain = r#"{"type":"user","message":{"role":"user","content":"hi"}}"#;
+        assert!(parse_single_line(plain.as_bytes(), &finders)
+            .resumed_agent_id
+            .is_none());
+    }
+
     #[test]
     fn test_system_prefix_false_normal_user_message() {
         let dir = tempfile::tempdir().unwrap();

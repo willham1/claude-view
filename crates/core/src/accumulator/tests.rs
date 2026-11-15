@@ -36,6 +36,7 @@ mod tests {
             sub_agent_result: None,
             sub_agent_progress: None,
             sub_agent_notification: None,
+            resumed_agent_id: None,
             todo_write: None,
             task_creates: Vec::new(),
             task_updates: Vec::new(),

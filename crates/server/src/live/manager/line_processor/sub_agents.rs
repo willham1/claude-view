@@ -132,14 +132,151 @@ pub(super) fn process_sub_agents(
             .iter_mut()
             .find(|a| a.agent_id.as_deref() == Some(&notif.agent_id))
         {
-            if notif.status == "completed" {
-                agent.status = SubAgentStatus::Complete;
-            } else {
-                agent.status = SubAgentStatus::Error;
-                agent.error_reason = Some(notif.status.clone());
-            }
-            agent.completed_at = line.timestamp.as_deref().and_then(parse_timestamp_to_unix);
-            agent.current_activity = None;
+            agent.apply_task_notification(
+                &notif.status,
+                line.timestamp.as_deref().and_then(parse_timestamp_to_unix),
+            );
         }
+    }
+
+    // A SendMessage resumed a helper that had handed back: working again.
+    if let Some(ref id) = line.resumed_agent_id {
+        if let Some(agent) = acc
+            .sub_agents
+            .iter_mut()
+            .find(|a| a.agent_id.as_deref() == Some(id.as_str()))
+        {
+            agent.resume();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Lines shaped like a real lead transcript (Claude Code, Nov 2026): a
+    //! background helper's hand-back arrives as queued-command lines, and a
+    //! SendMessage can resume it afterwards.
+    use super::*;
+    use claude_view_core::live_parser::{parse_single_line, TailFinders};
+
+    const NOTICE: &str = r#"<task-notification>\n<task-id>a5ac2a04b0b24c9a8</task-id>\n<tool-use-id>toolu_012ds</tool-use-id>\n<status>completed</status>\n<summary>Agent \"Build RW8b\" finished</summary>\n</task-notification>"#;
+
+    fn feed(acc: &mut SessionAccumulator, raw: &str) {
+        let line = parse_single_line(raw.as_bytes(), &TailFinders::new());
+        process_sub_agents(&line, acc, 0, &HashMap::new());
+    }
+
+    fn spawn_and_launch(acc: &mut SessionAccumulator) {
+        feed(
+            acc,
+            r#"{"type":"assistant","timestamp":"2026-11-15T06:00:00.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_012ds","name":"Agent","input":{"description":"Build RW8b","subagent_type":"builder","prompt":"go","run_in_background":true}}]}}"#,
+        );
+        feed(
+            acc,
+            r#"{"type":"user","timestamp":"2026-11-15T06:00:01.000Z","message":{"role":"user","content":[{"tool_use_id":"toolu_012ds","type":"tool_result","content":[{"type":"text","text":"Async agent launched successfully."}]}]},"toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"a5ac2a04b0b24c9a8","description":"Build RW8b"}}"#,
+        );
+        assert_eq!(acc.sub_agents.len(), 1);
+        assert_eq!(acc.sub_agents[0].status, SubAgentStatus::Running);
+    }
+
+    fn queued(ts: &str, op: &str, notice: &str) -> String {
+        format!(
+            r#"{{"type":"queue-operation","operation":"{op}","timestamp":"{ts}","sessionId":"s1","content":"{notice}"}}"#
+        )
+    }
+
+    #[test]
+    fn queued_hand_back_marks_helper_complete_at_first_copy() {
+        let mut acc = SessionAccumulator::new();
+        spawn_and_launch(&mut acc);
+
+        feed(
+            &mut acc,
+            &queued("2026-11-15T06:19:46.000Z", "enqueue", NOTICE),
+        );
+        feed(
+            &mut acc,
+            &queued("2026-11-15T06:19:47.000Z", "remove", NOTICE),
+        );
+        feed(
+            &mut acc,
+            &format!(
+                r#"{{"type":"attachment","timestamp":"2026-11-15T06:19:48.000Z","attachment":{{"type":"queued_command","prompt":"{NOTICE}"}}}}"#
+            ),
+        );
+
+        let a = &acc.sub_agents[0];
+        assert_eq!(a.status, SubAgentStatus::Complete);
+        assert_eq!(
+            a.completed_at,
+            parse_timestamp_to_unix("2026-11-15T06:19:46.000Z")
+        );
+        assert_eq!(a.error_reason, None);
+    }
+
+    #[test]
+    fn attachment_alone_marks_helper_failed() {
+        let mut acc = SessionAccumulator::new();
+        spawn_and_launch(&mut acc);
+        let failed = NOTICE.replace("completed", "killed");
+        feed(
+            &mut acc,
+            &format!(
+                r#"{{"type":"attachment","timestamp":"2026-11-15T06:19:48.000Z","attachment":{{"type":"queued_command","prompt":"{failed}"}}}}"#
+            ),
+        );
+        assert_eq!(acc.sub_agents[0].status, SubAgentStatus::Error);
+        assert_eq!(acc.sub_agents[0].error_reason.as_deref(), Some("killed"));
+    }
+
+    #[test]
+    fn resumed_helper_runs_again_until_its_next_hand_back() {
+        let mut acc = SessionAccumulator::new();
+        spawn_and_launch(&mut acc);
+        feed(
+            &mut acc,
+            &queued("2026-11-15T06:19:46.000Z", "enqueue", NOTICE),
+        );
+        assert_eq!(acc.sub_agents[0].status, SubAgentStatus::Complete);
+
+        // Lead sends findings; Claude Code resumes the helper.
+        feed(
+            &mut acc,
+            r#"{"type":"user","timestamp":"2026-11-15T06:30:45.000Z","message":{"role":"user","content":[{"tool_use_id":"toolu_send1","type":"tool_result","content":[{"type":"text","text":"{\"success\":true}"}]}]},"toolUseResult":{"success":true,"message":"Resuming agent a5ac2a0","resumedAgentId":"a5ac2a04b0b24c9a8","revivedAgentId":"a5ac2a04b0b24c9a8"}}"#,
+        );
+        let a = &acc.sub_agents[0];
+        assert_eq!(a.status, SubAgentStatus::Running);
+        assert_eq!(a.completed_at, None);
+
+        // Waiting on its own background work is not a hand-back.
+        let waiting = NOTICE.replace("finished", "is waiting on its own background work");
+        feed(
+            &mut acc,
+            &queued("2026-11-15T06:40:00.000Z", "enqueue", &waiting),
+        );
+        assert_eq!(acc.sub_agents[0].status, SubAgentStatus::Running);
+
+        feed(
+            &mut acc,
+            &queued("2026-11-15T06:50:00.000Z", "enqueue", NOTICE),
+        );
+        let a = &acc.sub_agents[0];
+        assert_eq!(a.status, SubAgentStatus::Complete);
+        assert_eq!(
+            a.completed_at,
+            parse_timestamp_to_unix("2026-11-15T06:50:00.000Z")
+        );
+    }
+
+    #[test]
+    fn notice_for_a_background_command_changes_no_helper() {
+        let mut acc = SessionAccumulator::new();
+        spawn_and_launch(&mut acc);
+        let bash = NOTICE.replace("a5ac2a04b0b24c9a8", "b9ehe4d60");
+        feed(
+            &mut acc,
+            &queued("2026-11-15T06:19:46.000Z", "enqueue", &bash),
+        );
+        assert_eq!(acc.sub_agents[0].status, SubAgentStatus::Running);
     }
 }

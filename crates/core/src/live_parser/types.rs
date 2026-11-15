@@ -60,7 +60,7 @@ pub struct SubAgentProgress {
     pub current_tool: Option<String>,
 }
 
-/// Extracted from a `<task-notification>` on a user line (background agent completion).
+/// Extracted from a `<task-notification>` (background agent completion).
 #[derive(Debug, Clone)]
 pub struct SubAgentNotification {
     /// The agent ID from `<task-id>`.
@@ -143,8 +143,12 @@ pub struct LiveLine {
     pub sub_agent_result: Option<SubAgentResult>,
     /// If this is a progress line with agent_progress data.
     pub sub_agent_progress: Option<SubAgentProgress>,
-    /// If this user line contains a `<task-notification>` for a background agent.
+    /// If this line carries a `<task-notification>` for a background agent: a user
+    /// line, a `queue-operation` line or a `queued_command` attachment line.
     pub sub_agent_notification: Option<SubAgentNotification>,
+    /// Agent id from `toolUseResult.resumedAgentId`: a SendMessage that resumed a
+    /// helper which had handed back, so it is working again.
+    pub resumed_agent_id: Option<String>,
     /// Full replacement todo list from TodoWrite tool_use on this assistant line.
     pub todo_write: Option<Vec<RawTodoItem>>,
     /// TaskCreate calls on this assistant line (Vec: one message can create multiple tasks).

@@ -216,9 +216,18 @@ pub(crate) fn truncate_str(s: &str, max: usize) -> String {
 /// Walks the content field (string or array of text blocks) looking for
 /// `<task-id>` and `<status>` XML tags within a `<task-notification>` block.
 /// Falls back to regex extraction if strict XML parsing fails.
+///
+/// A notice whose summary says the agent "is waiting on its own background
+/// work" is not a completion: the agent paused with background work of its
+/// own still running and resumes by itself, so it yields None.
 pub(crate) fn extract_task_notification(
     content_source: &serde_json::Value,
 ) -> Option<super::types::SubAgentNotification> {
+    if collect_notification_text(content_source)
+        .is_some_and(|t| t.contains("is waiting on its own background work</summary>"))
+    {
+        return None;
+    }
     if let Some(result) = extract_task_notification_xml(content_source) {
         return Some(result);
     }

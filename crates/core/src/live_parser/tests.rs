@@ -686,9 +686,25 @@ mod tests {
                 r#"{{"type":"attachment","timestamp":"2026-11-15T06:19:48.000Z","attachment":{{"type":"queued_command","prompt":"{n}"}}}}"#
             )
         };
+        // The copy written when the lead takes the notice can be a user line
+        // instead: string content, or a text block (possibly after other text).
+        let user_string = |n: &str| {
+            format!(
+                r#"{{"type":"user","timestamp":"2026-11-15T06:19:48.000Z","message":{{"role":"user","content":"{n}"}}}}"#
+            )
+        };
+        let user_array = |n: &str| {
+            format!(
+                r#"{{"type":"user","timestamp":"2026-11-15T06:19:48.000Z","message":{{"role":"user","content":[{{"type":"text","text":"[SYSTEM NOTIFICATION]\n{n}\n"}}]}}}}"#
+            )
+        };
         let fresh = QUEUED_NOTICE.replace("</summary>", "</summary>\\n<result>again</result>");
-        assert_eq!(fp(queued(QUEUED_NOTICE)), fp(attached(QUEUED_NOTICE)));
-        assert_ne!(fp(queued(QUEUED_NOTICE)), fp(queued(&fresh)));
+        let first = fp(queued(QUEUED_NOTICE));
+        assert_eq!(first, fp(attached(QUEUED_NOTICE)));
+        assert_eq!(first, fp(user_string(QUEUED_NOTICE)));
+        assert_eq!(first, fp(user_array(QUEUED_NOTICE)));
+        assert_ne!(first, fp(queued(&fresh)));
+        assert_ne!(first, fp(user_string(&fresh)));
     }
 
     #[test]

@@ -18,6 +18,7 @@ mod reaper;
 mod reconciler;
 mod sessions_lifecycle;
 mod startup;
+mod transcript_state;
 mod watcher;
 
 #[cfg(test)]
@@ -440,6 +441,10 @@ impl LiveSessionManager {
             }
             _ => {} // Created or Updated — expected
         }
+
+        // No hook has reported yet: start from the transcript's state rather
+        // than "Unknown" (fork change 10, transcript_state.rs).
+        self.refresh_transcript_state(&session_id).await;
 
         // Register PID with death watcher for immediate exit notification.
         self._death_watcher.watch(pid, session_id.clone()).await;

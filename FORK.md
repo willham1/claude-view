@@ -78,6 +78,15 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
    so a helper on one long command can show yellow, or even grey, while still busy
    (`subAgentActivity`, `agentTypeColor` in `SwimLanes.tsx`).
 
+10. **Live Monitor columns without hooks (LM1):** upstream sets a live session's state only from hooks, so with hooks
+    off (how this fork runs) every session sat in **Needs You** labelled "Unknown" and **Running** stayed empty. Until
+    a hook reports on a session, its state now comes from its transcript (the same reading startup recovery used),
+    refreshed on each transcript write and every 30 s. A session whose turn has ended while a background helper is
+    still working shows in **Running** as "Waiting on a background helper"; a helper counts as working while its
+    `subagents/agent-*.meta.json` lacks `"finished": true` and its transcript was written in the last 30 minutes
+    (`crates/server/src/live/manager/transcript_state.rs`; a hook event sets `agent_state_set_at` and hands the state
+    back to hooks).
+
 ## Running it
 
 - Launcher scripts are in `fork/launcher/` and find the repo from their own location. They run read-only:

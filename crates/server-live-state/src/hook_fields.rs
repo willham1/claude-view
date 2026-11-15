@@ -51,7 +51,9 @@ pub struct HookFields {
     pub progress_items: Vec<claude_view_core::progress::ProgressItem>,
     /// Number of context compactions in this session (compact_boundary system messages).
     pub compact_count: u32,
-    /// Monotonic timestamp when `agent_state` was last set. Same semantics.
+    /// When a hook lifecycle event last reached this session (set in the
+    /// coordinator's dispatch). 0 = no hook has reported, so `agent_state` is
+    /// derived from the transcript instead (hookless mode, fork change 10).
     #[serde(skip)]
     #[ts(skip)]
     pub agent_state_set_at: i64,

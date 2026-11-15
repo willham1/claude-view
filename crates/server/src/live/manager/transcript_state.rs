@@ -32,12 +32,16 @@ pub(super) const HELPER_STALE_SECS: i64 = 30 * 60;
 /// refresh settles the session if no line follows.
 pub(super) const HANDBACK_GRACE_SECS: i64 = 10;
 
-fn modified_secs(path: &Path) -> Option<i64> {
+fn modified_millis(path: &Path) -> Option<i64> {
     std::fs::metadata(path)
         .and_then(|m| m.modified())
         .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_secs() as i64)
+        .map(|d| d.as_millis() as i64)
+}
+
+fn modified_secs(path: &Path) -> Option<i64> {
+    modified_millis(path).map(|ms| ms / 1000)
 }
 
 /// Count the session's helpers still at work, from the
@@ -45,7 +49,8 @@ fn modified_secs(path: &Path) -> Option<i64> {
 /// transcript: a helper's meta gains `"finished": true` when it hands back.
 /// Helpers whose transcript is missing or quiet for `HELPER_STALE_SECS` are
 /// left out. `last_message_at`: when the lead's last message line was
-/// written (unix seconds), if known; see the hand-back grace below.
+/// written (unix milliseconds), if known; see the hand-back grace below.
+/// `now` is in unix seconds.
 pub(super) fn count_running_helpers(
     session_jsonl: &Path,
     now: i64,
@@ -77,11 +82,13 @@ pub(super) fn count_running_helpers(
             // but only while its hand-back is still due: the lead's last
             // message predates the finish. A lead that has written since
             // (e.g. ended the turn the hand-back started) is not waiting.
-            let finished_at = modified_secs(&entry.path());
-            let handback_due = match (finished_at, last_message_at) {
+            // Compared in milliseconds: the turn can end in the same second.
+            let finished_at_ms = modified_millis(&entry.path());
+            let handback_due = match (finished_at_ms, last_message_at) {
                 (Some(f), Some(m)) => m < f,
                 _ => true,
             };
+            let finished_at = finished_at_ms.map(|ms| ms / 1000);
             if handback_due && finished_at.is_some_and(|t| now - t <= HANDBACK_GRACE_SECS) {
                 running += 1;
             }
@@ -263,9 +270,12 @@ mod tests {
 
     /// Main transcript ending like the reported session: the lead's turn ended
     /// (end_turn), then the stop-hook summary and title lines.
+    /// The `end_turn` line carries a current timestamp, like real lines, so a
+    /// helper finishing right after falls in the same second.
     fn write_ended_turn(path: &Path) {
+        let ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         let mut f = std::fs::File::create(path).unwrap();
-        writeln!(f, r#"{{"type":"assistant","message":{{"role":"assistant","content":[{{"type":"text","text":"I'll be woken when the builder reports."}}],"stop_reason":"end_turn"}}}}"#).unwrap();
+        writeln!(f, r#"{{"type":"assistant","timestamp":"{ts}","message":{{"role":"assistant","content":[{{"type":"text","text":"I'll be woken when the builder reports."}}],"stop_reason":"end_turn"}}}}"#).unwrap();
         writeln!(f, r#"{{"type":"system","subtype":"stop_hook_summary","timestamp":"2026-11-15T08:26:12.581Z"}}"#).unwrap();
         writeln!(f, r#"{{"type":"custom-title","customTitle":"Lead"}}"#).unwrap();
     }
@@ -308,14 +318,27 @@ mod tests {
             true,
         );
         // Lead's last message older than the finish: hand-back still due.
-        assert_eq!(count_running_helpers(&jsonl, now(), Some(now() - 30)), 1);
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        assert_eq!(
+            count_running_helpers(&jsonl, now(), Some(now_ms - 30_000)),
+            1
+        );
         assert_eq!(count_running_helpers(&jsonl, now(), None), 1);
         assert_eq!(
             count_running_helpers(&jsonl, now() + HANDBACK_GRACE_SECS + 2, None),
             0
         );
         // Lead wrote after the finish (ended the hand-back turn): not waiting.
-        assert_eq!(count_running_helpers(&jsonl, now(), Some(now() + 1)), 0);
+        assert_eq!(
+            count_running_helpers(&jsonl, now(), Some(now_ms + 1_000)),
+            0
+        );
+        // Same second, but the lead's message came first: still due.
+        let finished_ms = modified_millis(&sub.join("agent-a1.meta.json")).unwrap();
+        assert_eq!(
+            count_running_helpers(&jsonl, now(), Some(finished_ms - 1)),
+            1
+        );
     }
 
     /// The lead ends its turn within seconds of a helper finishing (the turn
@@ -608,6 +631,69 @@ mod tests {
             assert_eq!(s.group, AgentStateGroup::Autonomous, "{line}");
             assert_eq!(s.state, "thinking");
         }
+    }
+
+    /// A `<task-notification>` user line starts a turn only if a model
+    /// request follows it. Shapes from real transcripts (claudeview lead
+    /// 03f8404f, 2026-11-13; a reopened session's "stopped" notice).
+    #[test]
+    fn task_notification_counts_only_when_the_model_is_asked() {
+        use super::super::accumulator::agent_state_from_tail_lines;
+        let ended = r#"{"type":"assistant","timestamp":"2026-11-13T07:36:09.500Z","message":{"role":"assistant","content":[{"type":"text","text":"All five started."}],"stop_reason":"end_turn"}}"#;
+        let stop_summary = r#"{"type":"system","subtype":"stop_hook_summary","hookCount":2}"#;
+        let dequeue = r#"{"type":"queue-operation","operation":"dequeue","timestamp":"2026-11-13T07:36:09.819Z"}"#;
+        let leftover = r#"{"type":"user","message":{"role":"user","content":"<task-notification>\n<task-id>a0169bfe53547714e</task-id>\n<status>completed</status>\n</task-notification>"}}"#;
+        let stopped = r#"{"type":"user","message":{"role":"user","content":"<task-notification>\n<task-id>b1</task-id>\n<status>stopped</status>\n<summary>didn't finish before the previous session ended</summary>\n</task-notification>"}}"#;
+        let last_prompt = r#"{"type":"last-prompt","lastPrompt":"x"}"#;
+        let blob = r#"{"type":"api-request-blob","hash":"ab","message":{"role":"user","content":[{"type":"text","text":"x"}]}}"#;
+        let api_request =
+            r#"{"type":"api-request","sessionId":"s","timestamp":"2026-11-13T07:36:09.900Z"}"#;
+        let lines = |ls: &[&str]| ls.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+
+        // Leftover notice after the answered hand-back, file ends: still idle.
+        let s = agent_state_from_tail_lines(&lines(&[
+            ended,
+            stop_summary,
+            dequeue,
+            leftover,
+            last_prompt,
+        ]))
+        .unwrap();
+        assert_eq!(s.group, AgentStateGroup::NeedsYou);
+        assert_eq!(s.state, "idle");
+        // Notice at the very end of the file.
+        let s = agent_state_from_tail_lines(&lines(&[ended, leftover])).unwrap();
+        assert_eq!(s.state, "idle");
+        // Reopened session: only the "stopped" notice, nothing before it in view.
+        assert!(agent_state_from_tail_lines(&lines(&[stopped, last_prompt])).is_none());
+        // An api-request-blob is not a request log line.
+        let s = agent_state_from_tail_lines(&lines(&[ended, leftover, blob])).unwrap();
+        assert_eq!(s.state, "idle");
+        // Answered notice: the model was asked, the lead is working.
+        let s = agent_state_from_tail_lines(&lines(&[ended, leftover, blob, api_request])).unwrap();
+        assert_eq!(s.group, AgentStateGroup::Autonomous);
+        assert_eq!(s.state, "thinking");
+    }
+
+    /// A finished lead whose last line is a leftover notice, with no helper
+    /// running, waits for the owner (Needs You), as do reopened sessions
+    /// whose earlier turn ended.
+    #[tokio::test]
+    async fn leftover_notice_after_finished_lead_is_needs_you() {
+        let tmp = tempfile::tempdir().unwrap();
+        let jsonl = tmp.path().join("sess.jsonl");
+        write_ended_turn(&jsonl);
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&jsonl)
+            .unwrap();
+        writeln!(f, r#"{{"type":"user","message":{{"role":"user","content":"<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n</task-notification>"}}}}"#).unwrap();
+        f.flush().unwrap();
+        let (manager, _rx) = manager_with_session(&jsonl).await;
+        manager.process_jsonl_update(&jsonl).await;
+        let s = manager.sessions.read().await.get("sess").cloned().unwrap();
+        assert_eq!(s.hook.agent_state.group, AgentStateGroup::NeedsYou);
+        assert_eq!(s.hook.agent_state.state, "idle");
     }
 
     #[test]

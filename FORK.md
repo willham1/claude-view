@@ -117,8 +117,11 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
     command (`/context`, `/usage`, `/compact`) read as **Needs You**, as with hooks. If the last lines are only
     bookkeeping (no message), the state is kept, so a busy session doesn't flip columns mid-turn. A helper that has
     just finished still counts for 10 s, covering the moment before its hand-back reaches the lead's transcript,
-    but only while the lead has written no message since the helper finished. Tool output is never read as a
-    local command or an interrupt.
+    but only while the lead has written no message since the helper finished (compared to the millisecond). Tool
+    output is never read as a local command or an interrupt. A `<task-notification>` line counts as the start of a
+    turn only once a model request (`api-request` line) follows it. Leftover notices after an answered hand-back,
+    and "stopped" notices written when a session is reopened, get no reply, so they don't keep a session in
+    Running.
     What you will notice:
     - **Dings:** a session that ends its turn now moves into Needs You, so the Live Monitor's sound (on by default)
       chimes at each turn end. Before, every card already sat in Needs You and never moved.
@@ -129,6 +132,9 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
     - **Background commands don't count:** only helpers keep an ended turn in Running. A session waiting on its own
       background command (a `run_in_background` Bash call) shows in Needs You as "Waiting for your next prompt" and
       chimes, though it will carry on by itself when the command ends.
+    - **Brief false chime on a queued hand-back:** when a helper finishes while the lead is still busy, its hand-back
+      is delivered 1–3 s after the lead's turn ends. If no other helper is running, the lead shows in Needs You (and
+      chimes) for those seconds, then goes back to Running. Seen twice in 14 days of the owner's transcripts.
 
 ## Running it
 

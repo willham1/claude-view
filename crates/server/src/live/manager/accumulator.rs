@@ -390,29 +390,45 @@ pub(super) fn agent_state_from_tail_lines(lines: &[String]) -> Option<AgentState
     tail_state_with_time(lines).map(|(state, _)| state)
 }
 
-/// Like `agent_state_from_tail_lines`, plus the unix time (seconds) of the
-/// line the state comes from, when it has a timestamp.
+/// Like `agent_state_from_tail_lines`, plus the unix time (milliseconds) of
+/// the line the state comes from, when it has a timestamp.
 pub(super) fn tail_state_with_time(lines: &[String]) -> Option<(AgentState, Option<i64>)> {
     let finders = claude_view_core::live_parser::TailFinders::new();
+    // Whether a model request was logged after the line being looked at.
+    let mut api_request_after = false;
 
     // Scan from the end to find the last meaningful line
     for raw in lines.iter().rev() {
         let parsed = claude_view_core::live_parser::parse_single_line(raw.as_bytes(), &finders);
-        if let Some(state) = line_state(raw, &parsed) {
+        if let Some(state) = line_state(raw, &parsed, api_request_after) {
             let at = parsed
                 .timestamp
                 .as_deref()
                 .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
-                .map(|d| d.timestamp());
+                .map(|d| d.timestamp_millis());
             return Some((state, at));
+        }
+        if is_api_request_line(raw) {
+            api_request_after = true;
         }
     }
     None
 }
 
+/// A `{"type":"api-request", …}` line: Claude Code logs one when it sends
+/// the model a request (not `api-request-blob`).
+fn is_api_request_line(raw: &str) -> bool {
+    raw.starts_with("{\"type\":\"api-request\"") || raw.contains("\"type\":\"api-request\",")
+}
+
 /// The state one transcript line shows, or `None` for a line that says
-/// nothing about it (progress, system, bookkeeping).
-fn line_state(raw: &str, parsed: &claude_view_core::live_parser::LiveLine) -> Option<AgentState> {
+/// nothing about it (progress, system, bookkeeping). `api_request_after`:
+/// a model request was logged after this line.
+fn line_state(
+    raw: &str,
+    parsed: &claude_view_core::live_parser::LiveLine,
+    api_request_after: bool,
+) -> Option<AgentState> {
     use claude_view_core::live_parser::LineType;
     let needs_you = |state: &str, label: &str| AgentState {
         group: AgentStateGroup::NeedsYou,
@@ -450,6 +466,14 @@ fn line_state(raw: &str, parsed: &claude_view_core::live_parser::LiveLine) -> Op
         }
         LineType::User => {
             let text = user_text_start(raw);
+            // A <task-notification> starts a turn only when the model is
+            // asked: a reply always logs an `api-request` within seconds.
+            // Notices that get none (a leftover one after the hand-back was
+            // answered, or "stopped" ones written on reopening a session)
+            // say nothing: the state comes from the line before.
+            if text.starts_with("<task-notification>") && !api_request_after {
+                return None;
+            }
             Some(if text.starts_with("[Request interrupted by user") {
                 // "[Request interrupted by user]" / "… for tool use]": the owner
                 // stopped the turn. Must start the text: a hand-back may quote it.

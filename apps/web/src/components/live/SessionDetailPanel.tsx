@@ -70,6 +70,7 @@ import { TasksOverviewSection } from './TasksOverviewSection'
 import { TimelineView } from './TimelineView'
 import { hasUnavailableCost } from './cost-display'
 import { getEffectiveBranch } from './effective-branch'
+import { sessionCostWithHelpers } from './helper-costs'
 import type { SessionPanelData } from './session-panel-data'
 import { liveSessionToPanelData } from './session-panel-data'
 import type { LiveSession } from './use-live-sessions'
@@ -402,12 +403,10 @@ export function SessionDetailPanel({
   // - Fall back to DB total_cost_usd only when rich data is unavailable.
   const dbCostUsd = data.historyExtras?.sessionInfo?.totalCostUsd
   const subAgentCostUsd = subAgents?.reduce((s, a) => s + (a.costUsd ?? 0), 0) ?? 0
-  const sidechainCostUsd = sidechainsData?.reduce((s, sc) => s + (sc.costUsd ?? 0), 0) ?? 0
   // Team sidechains price every subagents/agent-*.jsonl of the session, the same
   // files sub-agent costs come from, so count one or the other, never both.
-  const calculatedCostUsd =
-    data.cost.totalUsd +
-    (sidechainsData && sidechainsData.length > 0 ? sidechainCostUsd : subAgentCostUsd)
+  // Same rule as the Live Monitor card's total (helper-costs.ts, LM7).
+  const calculatedCostUsd = sessionCostWithHelpers(data, subAgentContexts, sidechainsData)
   const totalCostUsd = calculatedCostUsd > 0 ? calculatedCostUsd : (dbCostUsd ?? 0)
   const totalCostLabel = hasUnavailableCost(totalCostUsd, data.cost, data.tokens.totalTokens)
     ? 'Unavailable'

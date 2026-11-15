@@ -172,7 +172,7 @@ describe('Monitor panes (LM2)', () => {
     expect(ids(order.ranked)).toEqual(['a', 'b'])
   })
 
-  it('fills free slots with the most recent and keeps panes already shown', () => {
+  it('a session that gets busy takes the slot of the least recently active pane', () => {
     const first = orderMonitorPanes(
       [s('a', 100), s('b', 200), s('c', 300)],
       [],
@@ -180,11 +180,25 @@ describe('Monitor panes (LM2)', () => {
       2,
     )
     expect(ids(first.ranked)).toEqual(['c', 'b'])
-    // 'a' gets busy, but 'b' and 'c' are on screen and stay (no terminal torn down)
+    // 'a' gets busy: it replaces 'b' (the quietest shown); 'c' stays put in the page
     const busy = orderMonitorPanes([s('a', 900), s('b', 200), s('c', 300)], [], first.next, 2)
-    expect(ids(busy.ranked)).toEqual(['c', 'b'])
-    // when 'b' ends, its slot goes to 'a'
-    const ended = orderMonitorPanes([s('a', 900), s('c', 300)], [], busy.next, 2)
-    expect(ids(ended.ranked)).toEqual(['a', 'c'])
+    expect(ids(busy.ranked)).toEqual(['a', 'c'])
+    expect(ids(busy.domOrder)).toEqual(['a', 'c'])
+    // when 'a' ends, its slot goes back to 'b'
+    const ended = orderMonitorPanes([s('b', 200), s('c', 300)], [], busy.next, 2)
+    expect(ids(ended.ranked)).toEqual(['c', 'b'])
+  })
+
+  it('on equal activity a pane already shown keeps its slot', () => {
+    const first = orderMonitorPanes([s('a', 100), s('b', 100)], [], EMPTY_PANE_MEMORY, 1)
+    const shown = ids(first.ranked)[0]
+    const other = shown === 'a' ? 'b' : 'a'
+    const again = orderMonitorPanes([s(other, 100), s(shown as string, 100)], [], first.next, 1)
+    expect(ids(again.ranked)).toEqual([shown])
+  })
+
+  it('never swaps out a "Move to front" pane', () => {
+    const order = orderMonitorPanes([s('a', 100), s('b', 900)], ['a'], EMPTY_PANE_MEMORY, 1)
+    expect(ids(order.ranked)).toEqual(['a'])
   })
 })

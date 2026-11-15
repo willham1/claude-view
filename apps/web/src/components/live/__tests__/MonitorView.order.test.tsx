@@ -1,6 +1,7 @@
 import { render } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { useDockLayoutStore } from '../../../store/dock-layout-store'
 import { MonitorView } from '../MonitorView'
 import { autoGridCapacity } from '../monitor-pane-order'
 import type { LiveSession } from '../use-live-sessions'
@@ -11,7 +12,11 @@ vi.mock('../../../hooks/use-auto-layout', () => ({ useAutoLayout: () => {} }))
 vi.mock('../../../hooks/use-pane-zoom', () => ({ usePaneZoom: () => ({ toggleZoom: () => {} }) }))
 vi.mock('../../cli-terminal/CliTerminal', () => ({ CliTerminal: () => null }))
 vi.mock('../BlockTerminalPane', () => ({ BlockTerminalPane: () => null }))
-vi.mock('../DockLayout', () => ({ DockLayout: () => null }))
+vi.mock('../DockLayout', () => ({
+  DockLayout: ({ sessions }: { sessions: LiveSession[] }) => (
+    <div data-testid="dock" data-count={sessions.length} />
+  ),
+}))
 vi.mock('../GridControls', () => ({ GridControls: () => null }))
 vi.mock('../LayoutModeToggle', () => ({ LayoutModeToggle: () => null }))
 vi.mock('../LayoutPresets', () => ({ LayoutPresets: () => null }))
@@ -46,6 +51,57 @@ describe('MonitorView pane order (LM2)', () => {
       { id: 'a', order: '0' },
       { id: 'b', order: '1' },
     ])
+  })
+})
+
+describe('MonitorView capacity (LM2)', () => {
+  /** ResizeObserver stub that reports the given content size as soon as it observes. */
+  function stubResizeObserver(width: number, height: number) {
+    class StubResizeObserver {
+      private cb: ResizeObserverCallback
+      constructor(cb: ResizeObserverCallback) {
+        this.cb = cb
+      }
+      observe() {
+        this.cb(
+          [{ contentRect: { width, height } } as ResizeObserverEntry],
+          this as unknown as ResizeObserver,
+        )
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('ResizeObserver', StubResizeObserver)
+  }
+
+  const six = Array.from({ length: 6 }, (_, i) =>
+    makeLiveSession({ id: `s${i}`, lastActivityAt: 100 + i }),
+  )
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    useDockLayoutStore.setState({ monitorLayoutMode: 'auto-grid' })
+  })
+
+  it('auto grid shows only the panes that fit, newest first', () => {
+    stubResizeObserver(1216, 700)
+    const { container } = render(<MonitorView sessions={six} />)
+    const shown = panes(container)
+    expect(shown).toHaveLength(4)
+    expect(shown.map((p) => p.id).sort()).toEqual(['s2', 's3', 's4', 's5'])
+  })
+
+  it('auto grid keeps 8 until the container is measured', () => {
+    stubResizeObserver(0, 0)
+    const { container } = render(<MonitorView sessions={six} />)
+    expect(panes(container)).toHaveLength(6)
+  })
+
+  it('custom layout keeps up to 8 whatever the size', () => {
+    stubResizeObserver(500, 310)
+    useDockLayoutStore.setState({ monitorLayoutMode: 'custom' })
+    const { getByTestId } = render(<MonitorView sessions={six} />)
+    expect(getByTestId('dock').dataset.count).toBe('6')
   })
 })
 

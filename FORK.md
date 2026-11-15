@@ -85,11 +85,13 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
     Running; with Project + Branch grouping, projects and branches come in order of their most recently active
     session and re-order live, where upstream froze them in first-seen order), Harness (Needs You sidebar) and
     Monitor (auto-grid panes keep their place in the page and are positioned with CSS `order`, so re-ordering
-    doesn't move a terminal in the page; the auto grid now shows only as many panes as fit without clipping,
-    measured from the window, instead of a fixed 8 of which those past the visible edge were blank, since an
-    off-screen pane unmounts its terminal; when there are more sessions than slots, a pane already shown keeps its
-    slot and free slots go to the most recently active; "Move to front" still wins; custom layouts and phones keep
-    8). The Board's Sort control ("Last activity", "Alphabetical", "Highest cost") still works; Alphabetical and
+    doesn't move a terminal in the page; the auto grid now shows only as many panes as fit uncut, measured from
+    the window, instead of a fixed 8 that ran past the bottom edge (an off-screen pane unmounts its terminal):
+    at most 2 columns (the page is at most 1280px wide, panes at least 480px) and one row per ~304px of height, so
+    a laptop window usually gets 2 or 4 panes where it showed 3–4 before, the last ones cut off; with more
+    sessions than slots, the most recently active show: a session that becomes newer than the quietest pane on
+    screen takes that pane's slot (only that pane's terminal unmounts); hiding a pane frees a slot; "Move to front"
+    panes stay; custom layouts and phones keep 8). The Board's Sort control ("Last activity", "Alphabetical", "Highest cost") still works; Alphabetical and
     Highest cost order the groups, cards in a column stay newest first. Alphabetical no longer freezes groups either:
     a project or branch that appears later goes into its alphabetical place (upstream added it at the bottom); Highest
     cost keeps upstream's frozen order. Picking "last active" from the command palette starts newest first (it read

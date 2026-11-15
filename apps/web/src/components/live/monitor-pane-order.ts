@@ -4,7 +4,7 @@ import type { LiveSession } from './use-live-sessions'
 export interface MonitorPaneMemory {
   /** First-seen order of session ids (render order). */
   stableOrder: string[]
-  /** Ids shown last time, so a pane isn't swapped out just because another got busier. */
+  /** Ids shown last time, so a pane isn't swapped out for one that is only as recent. */
   shown: string[]
 }
 
@@ -45,9 +45,9 @@ export function autoGridCapacity(width: number, height: number): number | null {
  * - Panes are rendered in first-seen order (`domOrder`) and placed with CSS `order`
  *   (`rank`), so re-ordering as activity arrives never moves a terminal's DOM node
  *   (upstream avoided that because it made xterm terminals flicker).
- * - Which panes show is sticky: a pane already on screen stays while it is live and
- *   there's room (so its terminal isn't torn down when another session gets busier);
- *   free slots go to "Move to front" choices, then the most recently active sessions.
+ * - Which panes show: "Move to front" choices, then the most recently active. A
+ *   session that becomes newer than the least recently active shown pane takes its
+ *   slot; on equal activity a pane already shown keeps its slot (no flapping).
  */
 export function orderMonitorPanes(
   sessions: LiveSession[],
@@ -80,6 +80,23 @@ export function orderMonitorPanes(
   for (const id of manualPos.keys()) add(id)
   for (const id of memory.shown) add(id)
   for (const s of candidates) add(s.id)
+
+  // A session newer than the least recently active shown pane takes that pane's
+  // slot (only the leaving pane unmounts; the others stay put). "Move to front"
+  // panes are never swapped out.
+  const byId = new Map(sessions.map((s) => [s.id, s]))
+  for (const s of candidates) {
+    if (pick.has(s.id) || manualPos.has(s.id)) continue
+    let oldest: LiveSession | undefined
+    for (const id of pick) {
+      if (manualPos.has(id)) continue
+      const p = byId.get(id)
+      if (p && (!oldest || p.lastActivityAt < oldest.lastActivityAt)) oldest = p
+    }
+    if (!oldest || s.lastActivityAt <= oldest.lastActivityAt) break
+    pick.delete(oldest.id)
+    pick.add(s.id)
+  }
 
   const ranked = candidates.filter((s) => pick.has(s.id))
   const rank = new Map(ranked.map((s, i) => [s.id, i]))

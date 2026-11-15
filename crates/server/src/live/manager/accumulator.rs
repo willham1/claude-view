@@ -308,14 +308,39 @@ pub(super) fn build_recovered_session(
     }
 }
 
-/// Derive agent state from the JSONL file's tail -- ground truth for startup recovery.
-pub(super) async fn derive_agent_state_from_jsonl(path: &Path) -> Option<AgentState> {
-    use claude_view_core::live_parser::{LineType, TailFinders};
+/// How far back `derive_agent_state_from_jsonl` reads when the last few lines
+/// are all bookkeeping. Current Claude Code writes bursts of 10+ non-message
+/// lines (`attachment`, `queue-operation`, `api-request-blob`, `last-prompt`,
+/// titles, …) between a tool result and the next reply.
+const DERIVE_TAIL_SHORT: usize = 10;
+const DERIVE_TAIL_LONG: usize = 400;
 
-    let lines = claude_view_core::tail::tail_lines(path, 10).await.ok()?;
-    if lines.is_empty() {
-        return None;
+/// Derive agent state from the JSONL file's tail -- ground truth for startup
+/// recovery and for sessions no hook reports on. `None` = no user/assistant
+/// line in the last `DERIVE_TAIL_LONG` lines (or an empty file).
+pub(super) async fn derive_agent_state_from_jsonl(path: &Path) -> Option<AgentState> {
+    let lines = claude_view_core::tail::tail_lines(path, DERIVE_TAIL_SHORT)
+        .await
+        .ok()?;
+    if let Some(state) = agent_state_from_tail_lines(&lines) {
+        return Some(state);
     }
+    if lines.len() < DERIVE_TAIL_SHORT {
+        return None; // the whole file was read
+    }
+    let lines = claude_view_core::tail::tail_lines(path, DERIVE_TAIL_LONG)
+        .await
+        .ok()?;
+    agent_state_from_tail_lines(&lines)
+}
+
+/// The state shown by the last user/assistant line among `lines` (oldest
+/// first). Mirrors the hook mapping in `routes/hooks/resolve_state.rs` where
+/// the transcript can show it: a question, a plan for review and an interrupt
+/// wait for the user. A permission prompt can't be seen (the tail is just the
+/// `tool_use`), so it reads as "Using <tool>".
+pub(super) fn agent_state_from_tail_lines(lines: &[String]) -> Option<AgentState> {
+    use claude_view_core::live_parser::{LineType, TailFinders};
 
     let finders = TailFinders::new();
 
@@ -331,6 +356,23 @@ pub(super) async fn derive_agent_state_from_jsonl(path: &Path) -> Option<AgentSt
                 let has_tool_use = !parsed.tool_names.is_empty();
                 let stop = parsed.stop_reason.as_deref();
                 let is_tool_active = stop == Some("tool_use") || has_tool_use;
+
+                if parsed.tool_names.iter().any(|t| t == "AskUserQuestion") {
+                    return Some(AgentState {
+                        group: AgentStateGroup::NeedsYou,
+                        state: "awaiting_input".into(),
+                        label: "Asked you a question".into(),
+                        context: None,
+                    });
+                }
+                if parsed.tool_names.iter().any(|t| t == "ExitPlanMode") {
+                    return Some(AgentState {
+                        group: AgentStateGroup::NeedsYou,
+                        state: "awaiting_approval".into(),
+                        label: "Plan ready for review".into(),
+                        context: None,
+                    });
+                }
 
                 return Some(if stop == Some("end_turn") {
                     AgentState {
@@ -363,6 +405,16 @@ pub(super) async fn derive_agent_state_from_jsonl(path: &Path) -> Option<AgentSt
                 });
             }
             LineType::User => {
+                // "[Request interrupted by user]" / "… for tool use]": Claude
+                // Code writes this as the user line when the owner stops a turn.
+                if raw.contains("\"[Request interrupted by user") {
+                    return Some(AgentState {
+                        group: AgentStateGroup::NeedsYou,
+                        state: "interrupted".into(),
+                        label: "You interrupted the turn".into(),
+                        context: None,
+                    });
+                }
                 return Some(AgentState {
                     group: AgentStateGroup::Autonomous,
                     state: "thinking".into(),

@@ -476,7 +476,7 @@ impl LiveSessionManager {
                 return;
             }
             if let Some(derived) = derived {
-                super::transcript_state::apply_transcript_state(session, derived);
+                super::transcript_state::apply_transcript_state(session, &derived);
             }
             apply_jsonl_metadata(
                 session,

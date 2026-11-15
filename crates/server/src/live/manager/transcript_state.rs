@@ -67,19 +67,37 @@ pub(super) fn count_running_helpers(session_jsonl: &Path, now: i64) -> usize {
     running
 }
 
-/// Combine the transcript tail's state with the running-helper count.
+/// What the transcript shows: the state of its last user/assistant line
+/// (`None` if none was found near the end) and how many helpers are at work.
+#[derive(Debug, Clone)]
+pub(super) struct TranscriptReading {
+    pub tail: Option<AgentState>,
+    pub running_helpers: usize,
+}
+
+/// Combine the transcript reading with the session's current state. `None` =
+/// keep the current state: no user/assistant line was found (e.g. a burst of
+/// bookkeeping lines while the model works), so the transcript can't tell.
+/// Only the "unknown" default is then replaced, by idle.
 pub(super) fn transcript_agent_state(
-    tail: Option<AgentState>,
-    running_helpers: usize,
-) -> AgentState {
-    let tail = tail.unwrap_or_else(|| AgentState {
-        group: AgentStateGroup::NeedsYou,
-        state: "idle".into(),
-        label: "Waiting for your next prompt".into(),
-        context: None,
-    });
-    if tail.group == AgentStateGroup::NeedsYou && running_helpers > 0 {
-        return AgentState {
+    reading: &TranscriptReading,
+    current: &AgentState,
+) -> Option<AgentState> {
+    let tail = match &reading.tail {
+        Some(t) => t.clone(),
+        None if current.state == "unknown" => AgentState {
+            group: AgentStateGroup::NeedsYou,
+            state: "idle".into(),
+            label: "Waiting for your next prompt".into(),
+            context: None,
+        },
+        None => return None,
+    };
+    let running_helpers = reading.running_helpers;
+    // Only a turn that has simply ended counts as delegating: a question, a
+    // plan for review or an interrupt still waits for the user.
+    if tail.state == "idle" && running_helpers > 0 {
+        return Some(AgentState {
             group: AgentStateGroup::Autonomous,
             state: "delegating".into(),
             label: if running_helpers == 1 {
@@ -88,9 +106,9 @@ pub(super) fn transcript_agent_state(
                 format!("Waiting on {running_helpers} background helpers")
             },
             context: None,
-        };
+        });
     }
-    tail
+    Some(tail)
 }
 
 /// Whether the session's state should come from its transcript: live, and no
@@ -101,12 +119,18 @@ pub(super) fn wants_transcript_state(session: &LiveSession) -> bool {
         && !session.jsonl.file_path.is_empty()
 }
 
-/// Apply a transcript-derived state. Returns true if anything changed.
-pub(super) fn apply_transcript_state(session: &mut LiveSession, derived: AgentState) -> bool {
+/// Apply a transcript reading. Returns true if anything changed.
+pub(super) fn apply_transcript_state(
+    session: &mut LiveSession,
+    reading: &TranscriptReading,
+) -> bool {
     if !wants_transcript_state(session) {
         return false;
     }
     let current = &session.hook.agent_state;
+    let Some(derived) = transcript_agent_state(reading, current) else {
+        return false;
+    };
     if current.group == derived.group
         && current.state == derived.state
         && current.label == derived.label
@@ -120,14 +144,17 @@ pub(super) fn apply_transcript_state(session: &mut LiveSession, derived: AgentSt
 }
 
 /// Read the transcript at `path` and work out the session's state.
-pub(super) async fn derive_transcript_state(path: &Path) -> AgentState {
+pub(super) async fn derive_transcript_state(path: &Path) -> TranscriptReading {
     let tail = derive_agent_state_from_jsonl(path).await;
     let path = path.to_path_buf();
     let now = super::helpers::unix_now();
-    let helpers = tokio::task::spawn_blocking(move || count_running_helpers(&path, now))
+    let running_helpers = tokio::task::spawn_blocking(move || count_running_helpers(&path, now))
         .await
         .unwrap_or(0);
-    transcript_agent_state(tail, helpers)
+    TranscriptReading {
+        tail,
+        running_helpers,
+    }
 }
 
 impl LiveSessionManager {
@@ -147,7 +174,7 @@ impl LiveSessionManager {
             let Some(s) = sessions.get_mut(map_key) else {
                 return;
             };
-            if !apply_transcript_state(s, derived) {
+            if !apply_transcript_state(s, &derived) {
                 return;
             }
             s.clone()
@@ -263,40 +290,149 @@ mod tests {
         );
     }
 
+    fn state(group: AgentStateGroup, state: &str, label: &str) -> AgentState {
+        AgentState {
+            group,
+            state: state.into(),
+            label: label.into(),
+            context: None,
+        }
+    }
+
+    fn idle() -> AgentState {
+        state(
+            AgentStateGroup::NeedsYou,
+            "idle",
+            "Waiting for your next prompt",
+        )
+    }
+
+    fn reading(tail: Option<AgentState>, running_helpers: usize) -> TranscriptReading {
+        TranscriptReading {
+            tail,
+            running_helpers,
+        }
+    }
+
+    fn unknown() -> AgentState {
+        HookFields::default().agent_state
+    }
+
+    /// Bookkeeping lines current Claude Code writes between a tool result and
+    /// the next reply (shapes from a real transcript, contents cut down).
+    fn write_bookkeeping_burst(f: &mut std::fs::File, n: usize) {
+        let kinds = [
+            r#"{"type":"attachment","attachment":{"type":"queued_command","prompt":"x"}}"#,
+            r#"{"type":"queue-operation","operation":"enqueue","content":"x"}"#,
+            r#"{"type":"api-request-blob","hash":"ab","message":{"role":"system","content":[{"type":"text","text":"x"}]}}"#,
+            r#"{"type":"api-request","timestamp":"2026-11-15T08:25:50.680Z"}"#,
+            r#"{"type":"last-prompt","lastPrompt":"x"}"#,
+            r#"{"type":"custom-title","customTitle":"Lead"}"#,
+            r#"{"type":"agent-name","agentName":"lead"}"#,
+        ];
+        for i in 0..n {
+            writeln!(f, "{}", kinds[i % kinds.len()]).unwrap();
+        }
+    }
+
     #[test]
     fn ended_turn_with_running_helper_is_ongoing() {
-        let idle = AgentState {
-            group: AgentStateGroup::NeedsYou,
-            state: "idle".into(),
-            label: "Waiting for your next prompt".into(),
-            context: None,
-        };
-        let s = transcript_agent_state(Some(idle.clone()), 1);
+        let s = transcript_agent_state(&reading(Some(idle()), 1), &unknown()).unwrap();
         assert_eq!(s.group, AgentStateGroup::Autonomous);
         assert_eq!(s.state, "delegating");
         assert_eq!(s.label, "Waiting on a background helper");
         assert_eq!(
-            transcript_agent_state(Some(idle.clone()), 3).label,
+            transcript_agent_state(&reading(Some(idle()), 3), &unknown())
+                .unwrap()
+                .label,
             "Waiting on 3 background helpers"
         );
         // No helper: stays waiting for the user.
         assert_eq!(
-            transcript_agent_state(Some(idle), 0).group,
+            transcript_agent_state(&reading(Some(idle()), 0), &unknown())
+                .unwrap()
+                .group,
             AgentStateGroup::NeedsYou
         );
-        // Empty transcript: idle, not "unknown".
-        assert_eq!(transcript_agent_state(None, 0).state, "idle");
+    }
+
+    #[test]
+    fn question_plan_or_interrupt_wait_for_user_even_with_helper() {
+        for st in ["awaiting_input", "awaiting_approval", "interrupted"] {
+            let tail = state(AgentStateGroup::NeedsYou, st, "x");
+            let s = transcript_agent_state(&reading(Some(tail), 2), &unknown()).unwrap();
+            assert_eq!(s.group, AgentStateGroup::NeedsYou, "{st}");
+            assert_eq!(s.state, st);
+        }
+    }
+
+    #[test]
+    fn no_message_line_keeps_current_state() {
+        let acting = state(AgentStateGroup::Autonomous, "acting", "Using Bash");
+        assert!(transcript_agent_state(&reading(None, 0), &acting).is_none());
+        // Only the "unknown" default is replaced, by idle (or delegating).
+        assert_eq!(
+            transcript_agent_state(&reading(None, 0), &unknown())
+                .unwrap()
+                .state,
+            "idle"
+        );
+        assert_eq!(
+            transcript_agent_state(&reading(None, 1), &unknown())
+                .unwrap()
+                .state,
+            "delegating"
+        );
     }
 
     #[test]
     fn active_turn_keeps_its_own_state() {
-        let acting = AgentState {
-            group: AgentStateGroup::Autonomous,
-            state: "acting".into(),
-            label: "Using Bash".into(),
-            context: None,
-        };
-        assert_eq!(transcript_agent_state(Some(acting), 2).label, "Using Bash");
+        let acting = state(AgentStateGroup::Autonomous, "acting", "Using Bash");
+        assert_eq!(
+            transcript_agent_state(&reading(Some(acting), 2), &unknown())
+                .unwrap()
+                .label,
+            "Using Bash"
+        );
+    }
+
+    #[test]
+    fn tail_lines_map_question_plan_and_interrupt_to_needs_you() {
+        use super::super::accumulator::agent_state_from_tail_lines;
+        let ask = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"AskUserQuestion","input":{}}],"stop_reason":"tool_use"}}"#;
+        let plan = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t2","name":"ExitPlanMode","input":{}}],"stop_reason":"tool_use"}}"#;
+        // Real shape of an interrupt line (audiobookapp transcript, 2026-11-07).
+        let interrupt = r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}"#;
+        let interrupt_tool = r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t3","content":"[Request interrupted by user for tool use]","is_error":true}]}}"#;
+        let bash = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t4","name":"Bash","input":{}}],"stop_reason":"tool_use"}}"#;
+
+        let get = |l: &str| agent_state_from_tail_lines(&[l.to_string()]).unwrap();
+        assert_eq!(get(ask).group, AgentStateGroup::NeedsYou);
+        assert_eq!(get(ask).state, "awaiting_input");
+        assert_eq!(get(plan).group, AgentStateGroup::NeedsYou);
+        assert_eq!(get(plan).state, "awaiting_approval");
+        assert_eq!(get(interrupt).group, AgentStateGroup::NeedsYou);
+        assert_eq!(get(interrupt).state, "interrupted");
+        assert_eq!(get(interrupt_tool).state, "interrupted");
+        // Any other tool (a permission prompt can't be told apart): acting.
+        assert_eq!(get(bash).group, AgentStateGroup::Autonomous);
+        assert_eq!(get(bash).label, "Using Bash");
+    }
+
+    #[tokio::test]
+    async fn long_bookkeeping_burst_after_tool_result_still_reads_as_working() {
+        let tmp = tempfile::tempdir().unwrap();
+        let jsonl = tmp.path().join("sess.jsonl");
+        let mut f = std::fs::File::create(&jsonl).unwrap();
+        writeln!(f, r#"{{"type":"assistant","message":{{"role":"assistant","content":[{{"type":"tool_use","id":"x","name":"Bash","input":{{}}}}],"stop_reason":"tool_use"}}}}"#).unwrap();
+        writeln!(f, r#"{{"type":"user","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"x","content":"ok"}}]}}}}"#).unwrap();
+        write_bookkeeping_burst(&mut f, 25);
+        f.flush().unwrap();
+
+        let r = derive_transcript_state(&jsonl).await;
+        let tail = r.tail.expect("reads back past the burst");
+        assert_eq!(tail.group, AgentStateGroup::Autonomous);
+        assert_eq!(tail.state, "thinking");
     }
 
     #[tokio::test]
@@ -312,13 +448,15 @@ mod tests {
             r#"{"agentType":"builder","requestShape":"background"}"#,
         );
 
-        let derived = derive_transcript_state(&jsonl).await;
+        let r = derive_transcript_state(&jsonl).await;
+        let derived = transcript_agent_state(&r, &unknown()).unwrap();
         assert_eq!(derived.group, AgentStateGroup::Autonomous);
         assert_eq!(derived.state, "delegating");
 
         // Once the helper hands back, the session waits for the user again.
         write_helper(&sub, "a2", r#"{"agentType":"builder","finished":true}"#);
-        let derived = derive_transcript_state(&jsonl).await;
+        let r = derive_transcript_state(&jsonl).await;
+        let derived = transcript_agent_state(&r, &unknown()).unwrap();
         assert_eq!(derived.group, AgentStateGroup::NeedsYou);
         assert_eq!(derived.state, "idle");
     }
@@ -327,43 +465,48 @@ mod tests {
     fn apply_replaces_unknown_default_and_sets_status() {
         let mut s = session_with("/tmp/x.jsonl");
         assert_eq!(s.hook.agent_state.state, "unknown");
-        let derived = transcript_agent_state(None, 1);
-        assert!(apply_transcript_state(&mut s, derived.clone()));
+        let r = reading(None, 1);
+        assert!(apply_transcript_state(&mut s, &r));
         assert_eq!(s.hook.agent_state.group, AgentStateGroup::Autonomous);
         assert_eq!(s.status, SessionStatus::Working);
         assert_eq!(s.hook.current_activity, "Waiting on a background helper");
         // Same state again: no change reported.
-        assert!(!apply_transcript_state(&mut s, derived));
+        assert!(!apply_transcript_state(&mut s, &r));
         // Turn ended, no helper: Needs You, paused.
-        assert!(apply_transcript_state(
-            &mut s,
-            transcript_agent_state(None, 0)
-        ));
+        assert!(apply_transcript_state(&mut s, &reading(Some(idle()), 0)));
         assert_eq!(s.status, SessionStatus::Paused);
+        // No message line found: keep what we had.
+        assert!(!apply_transcript_state(&mut s, &reading(None, 0)));
+        assert_eq!(s.hook.agent_state.state, "idle");
     }
 
     #[test]
     fn apply_leaves_hook_reported_and_closed_sessions_alone() {
         let mut hooked = session_with("/tmp/x.jsonl");
         hooked.hook.agent_state_set_at = 42;
-        assert!(!apply_transcript_state(
-            &mut hooked,
-            transcript_agent_state(None, 1)
-        ));
+        assert!(!apply_transcript_state(&mut hooked, &reading(None, 1)));
         assert_eq!(hooked.hook.agent_state.state, "unknown");
 
         let mut done = session_with("/tmp/x.jsonl");
         done.status = SessionStatus::Done;
-        assert!(!apply_transcript_state(
-            &mut done,
-            transcript_agent_state(None, 1)
-        ));
+        assert!(!apply_transcript_state(&mut done, &reading(None, 1)));
 
         let mut no_file = session_with("");
-        assert!(!apply_transcript_state(
-            &mut no_file,
-            transcript_agent_state(None, 1)
-        ));
+        assert!(!apply_transcript_state(&mut no_file, &reading(None, 1)));
+    }
+
+    async fn manager_with_session(
+        jsonl: &Path,
+    ) -> (
+        std::sync::Arc<LiveSessionManager>,
+        tokio::sync::broadcast::Receiver<SessionEvent>,
+    ) {
+        let (manager, rx, _snap) = super::super::reaper::tests::make_test_manager().await;
+        let id = jsonl.file_stem().unwrap().to_str().unwrap().to_string();
+        let mut s = session_with(jsonl.to_str().unwrap());
+        s.id = id.clone();
+        manager.sessions.write().await.insert(id, s);
+        (manager, rx)
     }
 
     #[tokio::test]
@@ -376,21 +519,57 @@ mod tests {
             "a1",
             r#"{"agentType":"builder"}"#,
         );
-        let (manager, mut rx, _snap) = super::super::reaper::tests::make_test_manager().await;
-        manager
-            .sessions
-            .write()
-            .await
-            .insert("s1".into(), session_with(jsonl.to_str().unwrap()));
+        let (manager, mut rx) = manager_with_session(&jsonl).await;
 
         manager.refresh_all_transcript_states().await;
 
-        let s = manager.sessions.read().await.get("s1").cloned().unwrap();
+        let s = manager.sessions.read().await.get("sess").cloned().unwrap();
         assert_eq!(s.hook.agent_state.state, "delegating");
         assert_eq!(s.hook.agent_state.group, AgentStateGroup::Autonomous);
         assert!(matches!(
             rx.try_recv(),
             Ok(SessionEvent::SessionUpsert { .. })
         ));
+    }
+
+    /// The main path: each transcript write (`process_jsonl_update`) re-reads
+    /// the state. Writes: a tool result (working), a long bookkeeping burst
+    /// (still working, no flip to Needs You), then the reply ending the turn.
+    #[tokio::test]
+    async fn transcript_writes_update_hookless_session_without_flapping() {
+        let tmp = tempfile::tempdir().unwrap();
+        let jsonl = tmp.path().join("sess.jsonl");
+        let mut f = std::fs::File::create(&jsonl).unwrap();
+        writeln!(f, r#"{{"type":"user","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"x","content":"ok"}}]}}}}"#).unwrap();
+        f.flush().unwrap();
+        let (manager, _rx) = manager_with_session(&jsonl).await;
+        let state_now = || async {
+            manager
+                .sessions
+                .read()
+                .await
+                .get("sess")
+                .unwrap()
+                .hook
+                .agent_state
+                .clone()
+        };
+
+        manager.process_jsonl_update(&jsonl).await;
+        let s = state_now().await;
+        assert_eq!(s.group, AgentStateGroup::Autonomous);
+        assert_eq!(s.state, "thinking");
+
+        write_bookkeeping_burst(&mut f, 25);
+        f.flush().unwrap();
+        manager.process_jsonl_update(&jsonl).await;
+        assert_eq!(state_now().await.group, AgentStateGroup::Autonomous);
+
+        writeln!(f, r#"{{"type":"assistant","message":{{"role":"assistant","content":[{{"type":"text","text":"Done."}}],"stop_reason":"end_turn"}}}}"#).unwrap();
+        f.flush().unwrap();
+        manager.process_jsonl_update(&jsonl).await;
+        let s = state_now().await;
+        assert_eq!(s.group, AgentStateGroup::NeedsYou);
+        assert_eq!(s.state, "idle");
     }
 }

@@ -85,7 +85,16 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
     still working shows in **Running** as "Waiting on a background helper"; a helper counts as working while its
     `subagents/agent-*.meta.json` lacks `"finished": true` and its transcript was written in the last 30 minutes
     (`crates/server/src/live/manager/transcript_state.rs`; a hook event sets `agent_state_set_at` and hands the state
-    back to hooks).
+    back to hooks). A question (AskUserQuestion), a plan for review (ExitPlanMode) and an interrupt read as **Needs
+    You**, as with hooks. If the last lines are only bookkeeping (no message), the state is kept, so a busy session
+    doesn't flip columns mid-turn.
+    What you will notice:
+    - **Dings:** a session that ends its turn now moves into Needs You, so the Live Monitor's sound (on by default)
+      chimes at each turn end. Before, every card already sat in Needs You and never moved.
+    - **"Paused":** a session waiting for your prompt says "Paused" with an amber dot in its panel header, where it
+      said "Running".
+    - **Permission prompts are not visible:** a session stopped at a permission prompt still shows in Running as
+      "Using <tool>". The transcript doesn't record the prompt; only hooks can see it.
 
 ## Running it
 

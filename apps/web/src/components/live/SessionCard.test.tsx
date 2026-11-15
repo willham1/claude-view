@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SessionCard } from './SessionCard'
+import { useHelperCostStore } from './helper-costs'
 import type { LiveSession } from './use-live-sessions'
 
 function createMockSession(overrides: Partial<LiveSession> = {}): LiveSession {
@@ -421,5 +422,62 @@ describe('SessionCard goal', () => {
   it('does NOT render a goal pill when session.goal is null', () => {
     renderCard(createMockSession({ goal: null }))
     expect(screen.queryByText(/finish the e2e/)).not.toBeInTheDocument()
+  })
+})
+
+describe('SessionCard total cost (LM7)', () => {
+  afterEach(() => {
+    useHelperCostStore.setState({ costs: {}, sidechains: {} })
+  })
+
+  const helpers = [
+    {
+      agentId: 'a1',
+      toolUseId: 'toolu_01',
+      agentType: 'builder',
+      description: 'Build',
+      status: 'complete' as const,
+      startedAt: 1_700_000_000,
+    },
+    {
+      toolUseId: 'toolu_02',
+      agentType: 'reviewer',
+      description: 'Review',
+      status: 'running' as const,
+      startedAt: 1_700_000_000,
+    },
+  ]
+
+  it('shows the main session plus its helpers, priced from their transcripts', () => {
+    // The owner's case: $8.02 main + $138.57 helpers = $146.59.
+    useHelperCostStore.setState({
+      costs: {
+        'session-1': [
+          { agentId: 'a1', costUsd: 100.5 },
+          { agentId: 'b2', toolUseId: 'toolu_02', costUsd: 38.07 },
+        ],
+      },
+    })
+    const base = createMockSession()
+    renderCard(createMockSession({ cost: { ...base.cost, totalUsd: 8.02 }, subAgents: helpers }))
+    expect(screen.getByText('$146.59')).toBeInTheDocument()
+    expect(screen.queryByText('$8.02')).not.toBeInTheDocument()
+  })
+
+  it('falls back to what the parent transcript reported until helper costs arrive', () => {
+    const base = createMockSession()
+    renderCard(
+      createMockSession({
+        cost: { ...base.cost, totalUsd: 1 },
+        subAgents: [{ ...helpers[0], costUsd: 0.5 }, helpers[1]],
+      }),
+    )
+    expect(screen.getByText('$1.50')).toBeInTheDocument()
+  })
+
+  it('shows the main session cost alone when there are no helpers', () => {
+    useHelperCostStore.setState({ costs: { other: [{ agentId: 'x', costUsd: 9 }] } })
+    renderCard(createMockSession())
+    expect(screen.getByText('$0.42')).toBeInTheDocument()
   })
 })

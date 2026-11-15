@@ -38,17 +38,23 @@ export interface SubAgentContext {
  */
 export function subAgentCostUsd(
   agent: Pick<SubAgentInfo, 'agentId' | 'toolUseId' | 'costUsd'>,
-  contexts: SubAgentContext[] | undefined,
+  contexts: SubAgentCost[] | undefined,
 ): number | null {
   const fromTranscript = findSubAgentContext(agent, contexts)?.costUsd
   if (fromTranscript != null) return fromTranscript
   return agent.costUsd ?? null
 }
 
+/**
+ * The part of a [`SubAgentContext`] cost needs; what
+ * `GET /api/sessions/subagents/costs` returns per sub-agent.
+ */
+export type SubAgentCost = Pick<SubAgentContext, 'agentId' | 'toolUseId' | 'costUsd'>
+
 /** Sub-agents with `costUsd` filled from their transcripts where known. */
 export function withTranscriptCosts(
   agents: SubAgentInfo[] | undefined,
-  contexts: SubAgentContext[] | undefined,
+  contexts: SubAgentCost[] | undefined,
 ): SubAgentInfo[] | undefined {
   if (!agents || !contexts || contexts.length === 0) return agents
   return agents.map((a) => {
@@ -62,10 +68,10 @@ export const LIST_PRICE_TITLE =
   'List-price equivalent: what these tokens would cost at Anthropic API rates. Not billed on a subscription.'
 
 /** Find the context entry for a sub-agent: by agentId, else by spawning toolUseId. */
-export function findSubAgentContext(
+export function findSubAgentContext<C extends SubAgentCost>(
   agent: Pick<SubAgentInfo, 'agentId' | 'toolUseId'>,
-  contexts: SubAgentContext[] | undefined,
-): SubAgentContext | undefined {
+  contexts: C[] | undefined,
+): C | undefined {
   if (!contexts || contexts.length === 0) return undefined
   if (agent.agentId) {
     const byId = contexts.find((c) => c.agentId === agent.agentId)

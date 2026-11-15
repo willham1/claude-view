@@ -1519,3 +1519,60 @@ fn test_collect_session_pids_from_map() {
 
     assert_eq!(pids, vec![1234, 5678]);
 }
+
+#[test]
+fn test_session_found_at_startup_follows_older_transcript() {
+    // Fork change 12 (LM3): a session found at server start gets its last
+    // activity from its transcript, even when the transcript is older than the
+    // process start and much older than the discovery time.
+    use crate::live::coordinator::dispatch::common_post_mutation;
+    use crate::live::coordinator::session_factory::create_session_from_birth;
+    use crate::live::mutation::types::SessionMutation;
+
+    let discovered_at = 1_700_086_400; // server start
+    let active = claude_view_core::session_files::ActiveSession {
+        pid: 4242,
+        session_id: "lm3-transcript".to_string(),
+        cwd: "/tmp/lm3-project".to_string(),
+        started_at: 1_700_000_000_000,
+        kind: "interactive".to_string(),
+        entrypoint: "cli".to_string(),
+        name: None,
+    };
+    let mut session = create_session_from_birth(&active, discovered_at);
+
+    // Coordinator order: factory -> apply_accumulator_to_session (transcript
+    // mtime via apply_jsonl_metadata) -> common post-mutation bookkeeping.
+    let mut meta = minimal_jsonl_metadata();
+    meta.last_activity_at = 1_699_990_000; // transcript last written before the restart
+    apply_jsonl_metadata(
+        &mut session,
+        &meta,
+        "/tmp/lm3.jsonl",
+        "proj",
+        "proj",
+        "/tmp/proj",
+    );
+    let post = common_post_mutation(&SessionMutation::Birth(active), Some(4242), discovered_at);
+    if let Some(at) = post.update_activity_at {
+        session.hook.last_activity_at = at;
+    }
+    assert_eq!(session.hook.last_activity_at, 1_699_990_000);
+
+    // A later enrich keeps the later of hook time and transcript time
+    // (enrich_session_in_map); a newer transcript write moves it forward.
+    let hook_activity = session.hook.last_activity_at;
+    meta.last_activity_at = 1_700_090_000;
+    apply_jsonl_metadata(
+        &mut session,
+        &meta,
+        "/tmp/lm3.jsonl",
+        "proj",
+        "proj",
+        "/tmp/proj",
+    );
+    if hook_activity > session.hook.last_activity_at {
+        session.hook.last_activity_at = hook_activity;
+    }
+    assert_eq!(session.hook.last_activity_at, 1_700_090_000);
+}

@@ -136,6 +136,14 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
       is delivered 1–3 s after the lead's turn ends. If no other helper is running, the lead shows in Needs You (and
       chimes) for those seconds, then goes back to Running. Seen twice in 14 days of the owner's transcripts.
 
+12. **Last activity follows the transcript after a restart (LM3):** upstream stamped the discovery time as a live
+    session's last activity whenever it found the session (its `sessions/<pid>.json`), and the later-of rule on
+    each transcript read then kept that time. So after a server restart every session not written to since showed
+    the restart time ("8m ago" for all of them) and the last-activity sort (change 10) was arbitrary. Finding a
+    session is no longer counted as activity: it starts at its transcript's modification time, or the process
+    start time when it has no transcript yet (`coordinator/dispatch.rs`, `session_factory.rs`). Hooks still count
+    as activity, including hooks that arrived before the session was found.
+
 ## Running it
 
 - Launcher scripts are in `fork/launcher/` and find the repo from their own location. They run read-only:

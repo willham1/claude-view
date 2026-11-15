@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
-use axum::extract::{Path as AxumPath, Query, State};
+use axum::extract::{Path as AxumPath, State};
 use axum::Json;
 
 use claude_view_core::subagent_context::{
@@ -39,79 +39,6 @@ pub async fn get_subagent_context(
         .await
         .map_err(|e| ApiError::Internal(format!("join error: {e}")))?;
     Ok(Json(list))
-}
-
-/// Query for [`get_subagent_costs`]: comma-separated parent session IDs.
-#[derive(Debug, serde::Deserialize)]
-pub struct SubAgentCostsQuery {
-    #[serde(default)]
-    pub ids: String,
-}
-
-/// Cost of one sub-agent, from its own transcript (a slim [`SubAgentContext`]).
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SubAgentCost {
-    pub agent_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_use_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cost_usd: Option<f64>,
-}
-
-impl From<&SubAgentContext> for SubAgentCost {
-    fn from(c: &SubAgentContext) -> Self {
-        Self {
-            agent_id: c.agent_id.clone(),
-            tool_use_id: c.tool_use_id.clone(),
-            cost_usd: c.cost_usd,
-        }
-    }
-}
-
-/// Most session IDs one request may ask for.
-const MAX_COST_IDS: usize = 200;
-
-/// GET /api/sessions/subagents/costs?ids=a,b,c — per sub-agent cost for many
-/// sessions at once, so the Live Monitor's cards can show each session's total
-/// (main session plus helpers) with one request. Uses the same per-file cache
-/// as the context endpoint: a poll re-parses only transcripts that grew.
-/// Sessions that cannot be found are left out.
-#[utoipa::path(get, path = "/api/sessions/subagents/costs", tag = "sessions",
-    params(("ids" = String, Query, description = "Comma-separated parent session IDs")),
-    responses(
-        (status = 200, description = "Per sub-agent cost, keyed by session ID", body = serde_json::Value),
-    )
-)]
-pub async fn get_subagent_costs(
-    State(state): State<Arc<AppState>>,
-    Query(q): Query<SubAgentCostsQuery>,
-) -> ApiResult<Json<HashMap<String, Vec<SubAgentCost>>>> {
-    let mut paths = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    for id in q.ids.split(',').map(str::trim) {
-        if id.is_empty() || !seen.insert(id) || seen.len() > MAX_COST_IDS {
-            continue;
-        }
-        if let Ok(p) = resolve_session_file_path(&state, id).await {
-            paths.push((id.to_string(), p));
-        }
-    }
-    let out = tokio::task::spawn_blocking(move || {
-        paths
-            .into_iter()
-            .map(|(id, p)| {
-                let costs = collect_subagent_context(&p)
-                    .iter()
-                    .map(SubAgentCost::from)
-                    .collect();
-                (id, costs)
-            })
-            .collect::<HashMap<_, _>>()
-    })
-    .await
-    .map_err(|e| ApiError::Internal(format!("join error: {e}")))?;
-    Ok(Json(out))
 }
 
 /// Per-file summary cache keyed by path; an entry is reused while the file's

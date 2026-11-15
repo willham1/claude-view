@@ -443,7 +443,7 @@ impl LiveSessionManager {
         }
 
         // No hook has reported yet: start from the transcript's state rather
-        // than "Unknown" (fork change 10, transcript_state.rs).
+        // than "Unknown" (fork change 11, transcript_state.rs).
         self.refresh_transcript_state(&session_id).await;
 
         // Register PID with death watcher for immediate exit notification.

@@ -53,7 +53,7 @@ pub struct HookFields {
     pub compact_count: u32,
     /// When a hook lifecycle event last reached this session (set in the
     /// coordinator's dispatch). 0 = no hook has reported, so `agent_state` is
-    /// derived from the transcript instead (hookless mode, fork change 10).
+    /// derived from the transcript instead (hookless mode, fork change 11).
     #[serde(skip)]
     #[ts(skip)]
     pub agent_state_set_at: i64,

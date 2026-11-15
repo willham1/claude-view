@@ -456,7 +456,7 @@ impl LiveSessionManager {
             .unwrap_or_else(|| session_id.clone());
 
         // No hook reports on this session: read its state from the transcript
-        // (fork change 10, transcript_state.rs). Done before the write lock.
+        // (fork change 11, transcript_state.rs). Done before the write lock.
         let wants_derived = self
             .sessions
             .read()

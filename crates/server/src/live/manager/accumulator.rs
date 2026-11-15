@@ -319,11 +319,16 @@ const DERIVE_TAIL_LONG: usize = 400;
 /// recovery and for sessions no hook reports on. `None` = no user/assistant
 /// line in the last `DERIVE_TAIL_LONG` lines (or an empty file).
 pub(super) async fn derive_agent_state_from_jsonl(path: &Path) -> Option<AgentState> {
+    derive_tail_from_jsonl(path).await.map(|(state, _)| state)
+}
+
+/// Like `derive_agent_state_from_jsonl`, plus the time of the line it read.
+pub(super) async fn derive_tail_from_jsonl(path: &Path) -> Option<(AgentState, Option<i64>)> {
     let lines = claude_view_core::tail::tail_lines(path, DERIVE_TAIL_SHORT)
         .await
         .ok()?;
-    if let Some(state) = agent_state_from_tail_lines(&lines) {
-        return Some(state);
+    if let Some(found) = tail_state_with_time(&lines) {
+        return Some(found);
     }
     if lines.len() < DERIVE_TAIL_SHORT {
         return None; // the whole file was read
@@ -331,7 +336,7 @@ pub(super) async fn derive_agent_state_from_jsonl(path: &Path) -> Option<AgentSt
     let lines = claude_view_core::tail::tail_lines(path, DERIVE_TAIL_LONG)
         .await
         .ok()?;
-    agent_state_from_tail_lines(&lines)
+    tail_state_with_time(&lines)
 }
 
 fn idle_state() -> AgentState {
@@ -355,30 +360,22 @@ fn is_local_command_system_line(raw: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// The start of a user line's text: the string content, or the first block's
-/// `text` (or a `tool_result`'s content, string or first text block).
-/// Empty when there is none.
+/// The start of what the user (or Claude Code on their behalf) wrote: the
+/// string content, or the first block when it is a `text` block. Never a
+/// `tool_result`: tool output can print anything (e.g. another transcript's
+/// `<local-command-stdout>`). Empty when there is none.
 fn user_text_start(raw: &str) -> String {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) else {
         return String::new();
     };
-    let content = &v["message"]["content"];
-    let block_text = |b: &serde_json::Value| -> Option<String> {
-        if let Some(t) = b.get("text").and_then(|t| t.as_str()) {
-            return Some(t.to_string());
-        }
-        match b.get("content") {
-            Some(serde_json::Value::String(s)) => Some(s.clone()),
-            Some(serde_json::Value::Array(items)) => items
-                .iter()
-                .find_map(|i| i.get("text").and_then(|t| t.as_str()))
-                .map(str::to_string),
-            _ => None,
-        }
-    };
-    match content {
+    match &v["message"]["content"] {
         serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Array(blocks) => blocks.first().and_then(block_text).unwrap_or_default(),
+        serde_json::Value::Array(blocks) => blocks
+            .first()
+            .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("text"))
+            .and_then(|b| b.get("text").and_then(|t| t.as_str()))
+            .unwrap_or_default()
+            .to_string(),
         _ => String::new(),
     }
 }
@@ -388,97 +385,83 @@ fn user_text_start(raw: &str) -> String {
 /// the transcript can show it: a question, a plan for review and an interrupt
 /// wait for the user. A permission prompt can't be seen (the tail is just the
 /// `tool_use`), so it reads as "Using <tool>".
+#[cfg(test)]
 pub(super) fn agent_state_from_tail_lines(lines: &[String]) -> Option<AgentState> {
-    use claude_view_core::live_parser::{LineType, TailFinders};
+    tail_state_with_time(lines).map(|(state, _)| state)
+}
 
-    let finders = TailFinders::new();
+/// Like `agent_state_from_tail_lines`, plus the unix time (seconds) of the
+/// line the state comes from, when it has a timestamp.
+pub(super) fn tail_state_with_time(lines: &[String]) -> Option<(AgentState, Option<i64>)> {
+    let finders = claude_view_core::live_parser::TailFinders::new();
 
     // Scan from the end to find the last meaningful line
     for raw in lines.iter().rev() {
         let parsed = claude_view_core::live_parser::parse_single_line(raw.as_bytes(), &finders);
+        if let Some(state) = line_state(raw, &parsed) {
+            let at = parsed
+                .timestamp
+                .as_deref()
+                .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+                .map(|d| d.timestamp());
+            return Some((state, at));
+        }
+    }
+    None
+}
 
-        match parsed.line_type {
-            LineType::System if is_local_command_system_line(raw) => {
-                // Output of a local slash command (/context, /usage): its
-                // `<command-name>` user line gets no reply. Still waiting.
-                return Some(idle_state());
-            }
-            LineType::Progress | LineType::System | LineType::Other => {
-                continue; // Skip non-meaningful lines
-            }
-            LineType::Assistant => {
-                let has_tool_use = !parsed.tool_names.is_empty();
-                let stop = parsed.stop_reason.as_deref();
-                let is_tool_active = stop == Some("tool_use") || has_tool_use;
-
-                if parsed.tool_names.iter().any(|t| t == "AskUserQuestion") {
-                    return Some(AgentState {
-                        group: AgentStateGroup::NeedsYou,
-                        state: "awaiting_input".into(),
-                        label: "Asked you a question".into(),
-                        context: None,
-                    });
+/// The state one transcript line shows, or `None` for a line that says
+/// nothing about it (progress, system, bookkeeping).
+fn line_state(raw: &str, parsed: &claude_view_core::live_parser::LiveLine) -> Option<AgentState> {
+    use claude_view_core::live_parser::LineType;
+    let needs_you = |state: &str, label: &str| AgentState {
+        group: AgentStateGroup::NeedsYou,
+        state: state.into(),
+        label: label.into(),
+        context: None,
+    };
+    match parsed.line_type {
+        // Output of a local slash command (/context, /usage): its
+        // `<command-name>` user line gets no reply. Still waiting.
+        LineType::System if is_local_command_system_line(raw) => Some(idle_state()),
+        LineType::Progress | LineType::System | LineType::Other => None,
+        LineType::Assistant => {
+            let tools = &parsed.tool_names;
+            let stop = parsed.stop_reason.as_deref();
+            Some(if tools.iter().any(|t| t == "AskUserQuestion") {
+                needs_you("awaiting_input", "Asked you a question")
+            } else if tools.iter().any(|t| t == "ExitPlanMode") {
+                needs_you("awaiting_approval", "Plan ready for review")
+            } else if stop == Some("end_turn") {
+                idle_state()
+            } else if stop == Some("tool_use") || !tools.is_empty() {
+                AgentState {
+                    group: AgentStateGroup::Autonomous,
+                    state: "acting".into(),
+                    label: format!(
+                        "Using {}",
+                        tools.first().map(|s| s.as_str()).unwrap_or("tool")
+                    ),
+                    context: None,
                 }
-                if parsed.tool_names.iter().any(|t| t == "ExitPlanMode") {
-                    return Some(AgentState {
-                        group: AgentStateGroup::NeedsYou,
-                        state: "awaiting_approval".into(),
-                        label: "Plan ready for review".into(),
-                        context: None,
-                    });
-                }
-
-                return Some(if stop == Some("end_turn") {
-                    AgentState {
-                        group: AgentStateGroup::NeedsYou,
-                        state: "idle".into(),
-                        label: "Waiting for your next prompt".into(),
-                        context: None,
-                    }
-                } else if is_tool_active {
-                    AgentState {
-                        group: AgentStateGroup::Autonomous,
-                        state: "acting".into(),
-                        label: format!(
-                            "Using {}",
-                            parsed
-                                .tool_names
-                                .first()
-                                .map(|s| s.as_str())
-                                .unwrap_or("tool")
-                        ),
-                        context: None,
-                    }
-                } else {
-                    AgentState {
-                        group: AgentStateGroup::NeedsYou,
-                        state: "idle".into(),
-                        label: "Waiting for your next prompt".into(),
-                        context: None,
-                    }
-                });
-            }
-            LineType::User => {
-                let text = user_text_start(raw);
-                // "[Request interrupted by user]" / "… for tool use]": Claude
-                // Code writes this as the user line when the owner stops a turn.
-                // Must start the text: a hand-back may quote the phrase.
-                if text.starts_with("[Request interrupted by user") {
-                    return Some(AgentState {
-                        group: AgentStateGroup::NeedsYou,
-                        state: "interrupted".into(),
-                        label: "You interrupted the turn".into(),
-                        context: None,
-                    });
-                }
+            } else {
+                idle_state()
+            })
+        }
+        LineType::User => {
+            let text = user_text_start(raw);
+            Some(if text.starts_with("[Request interrupted by user") {
+                // "[Request interrupted by user]" / "… for tool use]": the owner
+                // stopped the turn. Must start the text: a hand-back may quote it.
+                needs_you("interrupted", "You interrupted the turn")
+            } else if text.starts_with("<local-command-stdout>")
+                || text.starts_with("<local-command-caveat>")
+            {
                 // A local slash command (/context, /usage, /compact) writes
                 // user lines but the model never replies: still waiting.
-                if text.starts_with("<local-command-stdout>")
-                    || text.starts_with("<local-command-caveat>")
-                {
-                    return Some(idle_state());
-                }
-                return Some(AgentState {
+                idle_state()
+            } else {
+                AgentState {
                     group: AgentStateGroup::Autonomous,
                     state: "thinking".into(),
                     label: if parsed.is_tool_result_continuation {
@@ -487,12 +470,10 @@ pub(super) fn agent_state_from_tail_lines(lines: &[String]) -> Option<AgentState
                         "Processing prompt...".into()
                     },
                     context: None,
-                });
-            }
+                }
+            })
         }
     }
-
-    None
 }
 
 /// Apply JSONL metadata to an existing session without touching hook-owned fields

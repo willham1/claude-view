@@ -19,7 +19,7 @@ use crate::live::state::{
     status_from_agent_state, AgentState, AgentStateGroup, LiveSession, SessionEvent, SessionStatus,
 };
 
-use super::accumulator::derive_agent_state_from_jsonl;
+use super::accumulator::derive_tail_from_jsonl;
 use super::LiveSessionManager;
 
 /// A helper whose own transcript has not been written for this long is not
@@ -44,8 +44,13 @@ fn modified_secs(path: &Path) -> Option<i64> {
 /// `{session}/subagents/agent-*.meta.json` files Claude Code writes beside the
 /// transcript: a helper's meta gains `"finished": true` when it hands back.
 /// Helpers whose transcript is missing or quiet for `HELPER_STALE_SECS` are
-/// left out.
-pub(super) fn count_running_helpers(session_jsonl: &Path, now: i64) -> usize {
+/// left out. `last_message_at`: when the lead's last message line was
+/// written (unix seconds), if known; see the hand-back grace below.
+pub(super) fn count_running_helpers(
+    session_jsonl: &Path,
+    now: i64,
+    last_message_at: Option<i64>,
+) -> usize {
     let dir = session_jsonl.with_extension("").join("subagents");
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return 0;
@@ -68,9 +73,16 @@ pub(super) fn count_running_helpers(session_jsonl: &Path, now: i64) -> usize {
         if finished {
             // Claude Code marks the helper finished ~70 ms before its
             // hand-back line reaches the main transcript; a read in that gap
-            // would show the lead idle (and chime). Keep counting it briefly.
+            // would show the lead idle (and chime). Keep counting it briefly,
+            // but only while its hand-back is still due: the lead's last
+            // message predates the finish. A lead that has written since
+            // (e.g. ended the turn the hand-back started) is not waiting.
             let finished_at = modified_secs(&entry.path());
-            if finished_at.is_some_and(|t| now - t <= HANDBACK_GRACE_SECS) {
+            let handback_due = match (finished_at, last_message_at) {
+                (Some(f), Some(m)) => m < f,
+                _ => true,
+            };
+            if handback_due && finished_at.is_some_and(|t| now - t <= HANDBACK_GRACE_SECS) {
                 running += 1;
             }
             continue;
@@ -161,12 +173,15 @@ pub(super) fn apply_transcript_state(
 
 /// Read the transcript at `path` and work out the session's state.
 pub(super) async fn derive_transcript_state(path: &Path) -> TranscriptReading {
-    let tail = derive_agent_state_from_jsonl(path).await;
+    let found = derive_tail_from_jsonl(path).await;
+    let last_message_at = found.as_ref().and_then(|(_, at)| *at);
+    let tail = found.map(|(state, _)| state);
     let path = path.to_path_buf();
     let now = super::helpers::unix_now();
-    let running_helpers = tokio::task::spawn_blocking(move || count_running_helpers(&path, now))
-        .await
-        .unwrap_or(0);
+    let running_helpers =
+        tokio::task::spawn_blocking(move || count_running_helpers(&path, now, last_message_at))
+            .await
+            .unwrap_or(0);
     TranscriptReading {
         tail,
         running_helpers,
@@ -292,11 +307,42 @@ mod tests {
             r#"{"agentType":"builder","finished":true}"#,
             true,
         );
-        assert_eq!(count_running_helpers(&jsonl, now()), 1);
+        // Lead's last message older than the finish: hand-back still due.
+        assert_eq!(count_running_helpers(&jsonl, now(), Some(now() - 30)), 1);
+        assert_eq!(count_running_helpers(&jsonl, now(), None), 1);
         assert_eq!(
-            count_running_helpers(&jsonl, now() + HANDBACK_GRACE_SECS + 2),
+            count_running_helpers(&jsonl, now() + HANDBACK_GRACE_SECS + 2, None),
             0
         );
+        // Lead wrote after the finish (ended the hand-back turn): not waiting.
+        assert_eq!(count_running_helpers(&jsonl, now(), Some(now() + 1)), 0);
+    }
+
+    /// The lead ends its turn within seconds of a helper finishing (the turn
+    /// the hand-back started): Needs You at once, not "Waiting on a
+    /// background helper" until the next 30 s refresh.
+    #[tokio::test]
+    async fn turn_ended_after_helper_finished_is_not_delegating() {
+        let tmp = tempfile::tempdir().unwrap();
+        let jsonl = tmp.path().join("sess.jsonl");
+        let sub = tmp.path().join("sess").join("subagents");
+        write_helper_at(
+            &sub,
+            "a1",
+            r#"{"agentType":"builder","finished":true}"#,
+            true,
+        );
+        let later = chrono::Utc::now() + chrono::Duration::seconds(2);
+        let ts = later.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let mut f = std::fs::File::create(&jsonl).unwrap();
+        writeln!(f, r#"{{"type":"assistant","timestamp":"{ts}","message":{{"role":"assistant","content":[{{"type":"text","text":"Merged."}}],"stop_reason":"end_turn"}}}}"#).unwrap();
+        f.flush().unwrap();
+
+        let r = derive_transcript_state(&jsonl).await;
+        assert_eq!(r.running_helpers, 0);
+        let s = transcript_agent_state(&r, &unknown()).unwrap();
+        assert_eq!(s.group, AgentStateGroup::NeedsYou);
+        assert_eq!(s.state, "idle");
     }
 
     /// Order Claude Code writes a hand-back in (seen 3 times in the reported
@@ -366,7 +412,7 @@ mod tests {
         );
         // Not a helper meta file: ignored.
         std::fs::write(sub.join("agent-a3.prefix.json"), "{}").unwrap();
-        assert_eq!(count_running_helpers(&jsonl, now()), 1);
+        assert_eq!(count_running_helpers(&jsonl, now(), None), 1);
     }
 
     #[test]
@@ -378,17 +424,17 @@ mod tests {
         std::fs::write(sub.join("agent-a2.meta.json"), r#"{"agentType":"builder"}"#).unwrap();
         // a1's transcript was written "now"; seen from HELPER_STALE_SECS + 60 later it is stale.
         assert_eq!(
-            count_running_helpers(&jsonl, now() + HELPER_STALE_SECS + 60),
+            count_running_helpers(&jsonl, now() + HELPER_STALE_SECS + 60, None),
             0
         );
-        assert_eq!(count_running_helpers(&jsonl, now()), 1);
+        assert_eq!(count_running_helpers(&jsonl, now(), None), 1);
     }
 
     #[test]
     fn no_subagents_folder_means_none_running() {
         let tmp = tempfile::tempdir().unwrap();
         assert_eq!(
-            count_running_helpers(&tmp.path().join("sess.jsonl"), now()),
+            count_running_helpers(&tmp.path().join("sess.jsonl"), now(), None),
             0
         );
     }
@@ -506,7 +552,8 @@ mod tests {
         let plan = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t2","name":"ExitPlanMode","input":{}}],"stop_reason":"tool_use"}}"#;
         // Real shape of an interrupt line (audiobookapp transcript, 2026-11-07).
         let interrupt = r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}"#;
-        let interrupt_tool = r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t3","content":"[Request interrupted by user for tool use]","is_error":true}]}}"#;
+        // Real shape: a text block, not a tool_result.
+        let interrupt_tool = r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}"#;
         let bash = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t4","name":"Bash","input":{}}],"stop_reason":"tool_use"}}"#;
 
         let get = |l: &str| agent_state_from_tail_lines(&[l.to_string()]).unwrap();
@@ -546,6 +593,21 @@ mod tests {
         // without the local_command output it reads as working.
         let s = agent_state_from_tail_lines(&lines(&[context_cmd])).unwrap();
         assert_eq!(s.group, AgentStateGroup::Autonomous);
+    }
+
+    /// Tool output that prints a local command's output or the interrupt
+    /// phrase is still a tool result: the turn goes on. (Real case: a Bash
+    /// result printing another transcript's /context output, 2026-11-06.)
+    #[test]
+    fn tool_result_text_is_not_read_as_local_command_or_interrupt() {
+        use super::super::accumulator::agent_state_from_tail_lines;
+        let printed_context = r##"{"type":"user","message":{"role":"user","content":[{"tool_use_id":"t1","type":"tool_result","content":"<local-command-stdout>## Context Usage\n","is_error":false}]}}"##;
+        let printed_blocks = r#"{"type":"user","message":{"role":"user","content":[{"tool_use_id":"t2","type":"tool_result","content":[{"type":"text","text":"[Request interrupted by user]"}]}]}}"#;
+        for line in [printed_context, printed_blocks] {
+            let s = agent_state_from_tail_lines(&[line.to_string()]).unwrap();
+            assert_eq!(s.group, AgentStateGroup::Autonomous, "{line}");
+            assert_eq!(s.state, "thinking");
+        }
     }
 
     #[test]

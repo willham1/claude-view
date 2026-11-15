@@ -8,6 +8,7 @@ import { ContextBar } from './ContextBar'
 import { StateBadge } from './SessionCard'
 import { StatusDot } from './StatusDot'
 import { hasUnavailableCost, unavailableCostReason } from './cost-display'
+import { compareByLastActivityDesc } from './live-filter'
 import { GROUP_ORDER } from './types'
 import { type LiveSession, sessionTotalCost } from './use-live-sessions'
 
@@ -66,8 +67,9 @@ const COLUMNS: {
 ]
 
 export function ListView({ sessions, selectedId, onSelect }: ListViewProps) {
-  const [sortColumn, setSortColumn] = useState<SortColumn>('status')
-  const [sortDir, setSortDir] = useState<SortDir>('asc')
+  // Fork (LM2): most recently active first by default, like the Sub-Agents tab.
+  const [sortColumn, setSortColumn] = useState<SortColumn>('lastActive')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
 
   const sorted = useMemo(() => {
     const arr = [...sessions]
@@ -102,8 +104,9 @@ export function ListView({ sessions, selectedId, onSelect }: ListViewProps) {
           cmp = a.lastActivityAt - b.lastActivityAt
           break
       }
-      if (cmp === 0) cmp = b.lastActivityAt - a.lastActivityAt
-      return sortDir === 'desc' ? -cmp : cmp
+      if (cmp !== 0) return sortDir === 'desc' ? -cmp : cmp
+      // Tiebreaker: most recently active first, whichever the direction
+      return compareByLastActivityDesc(a, b)
     })
     return arr
   }, [sessions, sortColumn, sortDir])
@@ -113,7 +116,7 @@ export function ListView({ sessions, selectedId, onSelect }: ListViewProps) {
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
     } else {
       setSortColumn(col)
-      setSortDir('asc')
+      setSortDir(col === 'lastActive' ? 'desc' : 'asc')
     }
   }
 

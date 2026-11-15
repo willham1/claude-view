@@ -1,6 +1,6 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useRef } from 'react'
 import type { LiveSessionFilters, LiveSortDirection, LiveSortField } from './live-filter'
-import { DEFAULT_LIVE_FILTERS } from './live-filter'
+import { DEFAULT_LIVE_FILTERS, defaultSortDir } from './live-filter'
 
 const FILTER_KEYS = ['status', 'project', 'branch', 'q', 'sort', 'dir'] as const
 
@@ -83,25 +83,33 @@ export function useLiveSessionFilters(
     [searchParams, setSearchParams],
   )
 
+  // Latest params for setSort: the command palette can hold on to an old setSort
+  // (it re-registers only when the view or session count changes).
+  const latestParamsRef = useRef(searchParams)
+  latestParamsRef.current = searchParams
+
   const setSort = useCallback(
     (field: LiveSortField, dir?: LiveSortDirection) => {
-      const params = new URLSearchParams(searchParams)
+      const current = latestParamsRef.current
+      const params = new URLSearchParams(current)
       params.set('sort', field)
       if (dir) {
         params.set('dir', dir)
       } else {
-        // Toggle direction if same field, otherwise default to asc
-        const currentSort = searchParams.get('sort')
-        const currentDir = searchParams.get('dir') ?? 'asc'
+        // Toggle direction if the address already sorts by this field; otherwise
+        // (including no sort in the address) start in the field's natural direction,
+        // so a first pick of "last active" gives newest first
+        const currentSort = current.get('sort')
+        const currentDir = current.get('dir') ?? DEFAULT_LIVE_FILTERS.sortDir
         if (currentSort === field) {
           params.set('dir', currentDir === 'asc' ? 'desc' : 'asc')
         } else {
-          params.set('dir', 'asc')
+          params.set('dir', defaultSortDir(field))
         }
       }
       setSearchParams(params, { replace: true })
     },
-    [searchParams, setSearchParams],
+    [setSearchParams],
   )
 
   const clearAll = useCallback(() => {

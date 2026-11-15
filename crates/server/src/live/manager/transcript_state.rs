@@ -27,6 +27,19 @@ use super::LiveSessionManager;
 /// helper running one long command writes nothing until the command ends.
 pub(super) const HELPER_STALE_SECS: i64 = 30 * 60;
 
+/// A helper marked finished this recently still counts as running, to cover
+/// the gap before its hand-back line reaches the main transcript. The 30 s
+/// refresh settles the session if no line follows.
+pub(super) const HANDBACK_GRACE_SECS: i64 = 10;
+
+fn modified_secs(path: &Path) -> Option<i64> {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+}
+
 /// Count the session's helpers still at work, from the
 /// `{session}/subagents/agent-*.meta.json` files Claude Code writes beside the
 /// transcript: a helper's meta gains `"finished": true` when it hands back.
@@ -53,13 +66,16 @@ pub(super) fn count_running_helpers(session_jsonl: &Path, now: i64) -> usize {
             .and_then(|v| v.get("finished").and_then(|f| f.as_bool()))
             .unwrap_or(false);
         if finished {
+            // Claude Code marks the helper finished ~70 ms before its
+            // hand-back line reaches the main transcript; a read in that gap
+            // would show the lead idle (and chime). Keep counting it briefly.
+            let finished_at = modified_secs(&entry.path());
+            if finished_at.is_some_and(|t| now - t <= HANDBACK_GRACE_SECS) {
+                running += 1;
+            }
             continue;
         }
-        let written_at = std::fs::metadata(dir.join(format!("{stem}.jsonl")))
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_secs() as i64);
+        let written_at = modified_secs(&dir.join(format!("{stem}.jsonl")));
         if written_at.is_some_and(|t| now - t <= HELPER_STALE_SECS) {
             running += 1;
         }
@@ -239,14 +255,101 @@ mod tests {
         writeln!(f, r#"{{"type":"custom-title","customTitle":"Lead"}}"#).unwrap();
     }
 
-    fn write_helper(dir: &Path, id: &str, meta: &str) {
+    /// Writes a helper's meta and transcript. A finished meta is dated a
+    /// minute back (past the hand-back grace) unless `fresh_finish`.
+    fn write_helper_at(dir: &Path, id: &str, meta: &str, fresh_finish: bool) {
         std::fs::create_dir_all(dir).unwrap();
-        std::fs::write(dir.join(format!("agent-{id}.meta.json")), meta).unwrap();
+        let meta_path = dir.join(format!("agent-{id}.meta.json"));
+        std::fs::write(&meta_path, meta).unwrap();
         std::fs::write(dir.join(format!("agent-{id}.jsonl")), "{}\n").unwrap();
+        if meta.contains("\"finished\":true") && !fresh_finish {
+            let past = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+            std::fs::File::options()
+                .write(true)
+                .open(&meta_path)
+                .unwrap()
+                .set_modified(past)
+                .unwrap();
+        }
+    }
+
+    fn write_helper(dir: &Path, id: &str, meta: &str) {
+        write_helper_at(dir, id, meta, false);
     }
 
     fn now() -> i64 {
         super::super::helpers::unix_now()
+    }
+
+    #[test]
+    fn just_finished_helper_counts_during_handback_grace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let jsonl = tmp.path().join("sess.jsonl");
+        let sub = tmp.path().join("sess").join("subagents");
+        write_helper_at(
+            &sub,
+            "a1",
+            r#"{"agentType":"builder","finished":true}"#,
+            true,
+        );
+        assert_eq!(count_running_helpers(&jsonl, now()), 1);
+        assert_eq!(
+            count_running_helpers(&jsonl, now() + HANDBACK_GRACE_SECS + 2),
+            0
+        );
+    }
+
+    /// Order Claude Code writes a hand-back in (seen 3 times in the reported
+    /// session): enqueue line, meta `finished`, dequeue, then the hand-back
+    /// user line ~70 ms later. A transcript write handled in that gap must
+    /// not drop the lead into Needs You.
+    #[tokio::test]
+    async fn handback_gap_does_not_drop_lead_into_needs_you() {
+        let tmp = tempfile::tempdir().unwrap();
+        let jsonl = tmp.path().join("sess.jsonl");
+        write_ended_turn(&jsonl);
+        let sub = tmp.path().join("sess").join("subagents");
+        write_helper(&sub, "a1", r#"{"agentType":"builder"}"#);
+        let (manager, _rx) = manager_with_session(&jsonl).await;
+        manager.process_jsonl_update(&jsonl).await;
+        let group = |m: &std::sync::Arc<LiveSessionManager>| {
+            let m = m.clone();
+            async move {
+                m.sessions
+                    .read()
+                    .await
+                    .get("sess")
+                    .unwrap()
+                    .hook
+                    .agent_state
+                    .group
+                    .clone()
+            }
+        };
+        assert_eq!(group(&manager).await, AgentStateGroup::Autonomous);
+
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&jsonl)
+            .unwrap();
+        writeln!(f, r#"{{"type":"queue-operation","operation":"enqueue","content":"<agent-message from=\"a1\">"}}"#).unwrap();
+        f.flush().unwrap();
+        write_helper_at(
+            &sub,
+            "a1",
+            r#"{"agentType":"builder","finished":true}"#,
+            true,
+        );
+        writeln!(f, r#"{{"type":"queue-operation","operation":"dequeue"}}"#).unwrap();
+        f.flush().unwrap();
+        manager.process_jsonl_update(&jsonl).await;
+        assert_eq!(group(&manager).await, AgentStateGroup::Autonomous);
+
+        // The hand-back line starts the lead's next turn.
+        writeln!(f, r#"{{"type":"user","message":{{"role":"user","content":"Another Claude session sent a message:\n<agent-message from=\"a1\">done</agent-message>"}}}}"#).unwrap();
+        f.flush().unwrap();
+        manager.process_jsonl_update(&jsonl).await;
+        assert_eq!(group(&manager).await, AgentStateGroup::Autonomous);
     }
 
     #[test]
@@ -417,6 +520,42 @@ mod tests {
         // Any other tool (a permission prompt can't be told apart): acting.
         assert_eq!(get(bash).group, AgentStateGroup::Autonomous);
         assert_eq!(get(bash).label, "Using Bash");
+    }
+
+    /// Local slash commands get no reply from the model: still waiting.
+    /// Shapes from real transcripts (/context in a desktop-app session,
+    /// /compact), contents cut down.
+    #[test]
+    fn local_slash_commands_read_as_waiting() {
+        use super::super::accumulator::agent_state_from_tail_lines;
+        let caveat = r#"{"type":"user","isMeta":true,"message":{"role":"user","content":"<local-command-caveat>The command below was run directly in Claude Code</local-command-caveat>"}}"#;
+        let context_cmd = r#"{"type":"user","message":{"role":"user","content":"<command-name>/context</command-name>\n            <command-message>context</command-message>\n            <command-args></command-args>"}}"#;
+        let context_out = r#"{"type":"system","subtype":"local_command","content":"<local-command-stdout>## Context Usage</local-command-stdout>","level":"info"}"#;
+        let title = r#"{"type":"custom-title","customTitle":"Boop"}"#;
+        let compact_cmd = r#"{"type":"user","message":{"role":"user","content":"<command-name>/compact</command-name>\n            <command-message>compact</command-message>"}}"#;
+        let compact_out = r#"{"type":"user","message":{"role":"user","content":"<local-command-stdout>Compacted </local-command-stdout>"}}"#;
+        let lines = |ls: &[&str]| ls.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+
+        let s = agent_state_from_tail_lines(&lines(&[caveat, context_cmd, context_out, title]))
+            .unwrap();
+        assert_eq!(s.group, AgentStateGroup::NeedsYou);
+        assert_eq!(s.state, "idle");
+        let s = agent_state_from_tail_lines(&lines(&[caveat, compact_cmd, compact_out])).unwrap();
+        assert_eq!(s.group, AgentStateGroup::NeedsYou);
+        // A prompt command (skill) also writes <command-name> but gets a reply:
+        // without the local_command output it reads as working.
+        let s = agent_state_from_tail_lines(&lines(&[context_cmd])).unwrap();
+        assert_eq!(s.group, AgentStateGroup::Autonomous);
+    }
+
+    #[test]
+    fn line_quoting_the_interrupt_phrase_is_not_an_interrupt() {
+        use super::super::accumulator::agent_state_from_tail_lines;
+        // A hand-back that quotes the phrase (real case, 2026-11-15 09:31Z).
+        let quoting = r#"{"type":"user","message":{"role":"user","content":"Another Claude session sent a message:\nit showed \"[Request interrupted by user]\" in the log"}}"#;
+        let s = agent_state_from_tail_lines(&[quoting.to_string()]).unwrap();
+        assert_eq!(s.group, AgentStateGroup::Autonomous);
+        assert_eq!(s.state, "thinking");
     }
 
     #[tokio::test]

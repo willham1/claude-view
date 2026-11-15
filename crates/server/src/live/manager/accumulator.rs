@@ -334,6 +334,55 @@ pub(super) async fn derive_agent_state_from_jsonl(path: &Path) -> Option<AgentSt
     agent_state_from_tail_lines(&lines)
 }
 
+fn idle_state() -> AgentState {
+    AgentState {
+        group: AgentStateGroup::NeedsYou,
+        state: "idle".into(),
+        label: "Waiting for your next prompt".into(),
+        context: None,
+    }
+}
+
+/// A `system` line with `"subtype":"local_command"` (a local slash command's output).
+fn is_local_command_system_line(raw: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|v| {
+            v.get("subtype")
+                .and_then(|s| s.as_str())
+                .map(|s| s == "local_command")
+        })
+        .unwrap_or(false)
+}
+
+/// The start of a user line's text: the string content, or the first block's
+/// `text` (or a `tool_result`'s content, string or first text block).
+/// Empty when there is none.
+fn user_text_start(raw: &str) -> String {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return String::new();
+    };
+    let content = &v["message"]["content"];
+    let block_text = |b: &serde_json::Value| -> Option<String> {
+        if let Some(t) = b.get("text").and_then(|t| t.as_str()) {
+            return Some(t.to_string());
+        }
+        match b.get("content") {
+            Some(serde_json::Value::String(s)) => Some(s.clone()),
+            Some(serde_json::Value::Array(items)) => items
+                .iter()
+                .find_map(|i| i.get("text").and_then(|t| t.as_str()))
+                .map(str::to_string),
+            _ => None,
+        }
+    };
+    match content {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(blocks) => blocks.first().and_then(block_text).unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
 /// The state shown by the last user/assistant line among `lines` (oldest
 /// first). Mirrors the hook mapping in `routes/hooks/resolve_state.rs` where
 /// the transcript can show it: a question, a plan for review and an interrupt
@@ -349,6 +398,11 @@ pub(super) fn agent_state_from_tail_lines(lines: &[String]) -> Option<AgentState
         let parsed = claude_view_core::live_parser::parse_single_line(raw.as_bytes(), &finders);
 
         match parsed.line_type {
+            LineType::System if is_local_command_system_line(raw) => {
+                // Output of a local slash command (/context, /usage): its
+                // `<command-name>` user line gets no reply. Still waiting.
+                return Some(idle_state());
+            }
             LineType::Progress | LineType::System | LineType::Other => {
                 continue; // Skip non-meaningful lines
             }
@@ -405,15 +459,24 @@ pub(super) fn agent_state_from_tail_lines(lines: &[String]) -> Option<AgentState
                 });
             }
             LineType::User => {
+                let text = user_text_start(raw);
                 // "[Request interrupted by user]" / "… for tool use]": Claude
                 // Code writes this as the user line when the owner stops a turn.
-                if raw.contains("\"[Request interrupted by user") {
+                // Must start the text: a hand-back may quote the phrase.
+                if text.starts_with("[Request interrupted by user") {
                     return Some(AgentState {
                         group: AgentStateGroup::NeedsYou,
                         state: "interrupted".into(),
                         label: "You interrupted the turn".into(),
                         context: None,
                     });
+                }
+                // A local slash command (/context, /usage, /compact) writes
+                // user lines but the model never replies: still waiting.
+                if text.starts_with("<local-command-stdout>")
+                    || text.starts_with("<local-command-caveat>")
+                {
+                    return Some(idle_state());
                 }
                 return Some(AgentState {
                     group: AgentStateGroup::Autonomous,

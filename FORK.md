@@ -193,7 +193,18 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
     cost per line charged every cache write at the 5-minute rate, so sessions using 1-hour caching were undercounted
     (on Opus 4.6, $10/MTok written as $6.25). It now splits writes by lifetime like the rest of the app, from the
     5m/1h counts already stored per model in `session_stats.per_model_tokens_json` (`cache_creation_cost` in
-    `crates/core/src/pricing/calculate.rs`). Writes with no recorded lifetime keep the 5-minute rate.
+    `crates/core/src/pricing/calculate.rs`). Writes with no recorded lifetime keep the 5-minute rate, including
+    when they are summed with writes that have one (the part of the total in neither split count).
+
+17. **Rust git hooks find the toolchain without `cargo` on PATH:** Homebrew's rustup keeps its proxies in
+    `/opt/homebrew/opt/rustup/bin`, often not on PATH, so upstream's hooks failed (exit 127) and blocked every Rust
+    commit and push. In `lefthook.yml`, pre-commit runs rustfmt as `"$(rustup which rustfmt)"` (follows
+    `rust-toolchain.toml`), and pre-push runs `./scripts/cq deny check` instead of `cargo deny check` (cq puts the
+    pinned toolchain first on PATH). Keep both when merging upstream's `lefthook.yml`.
+
+18. **cargo-deny ignores RUSTSEC-2026-0543 (chrono unmaintained)**, the owner's decision on 2026-11-21: a maintenance
+    notice with no vulnerability and no fixed version, and claude-view uses chrono throughout (`deny.toml`). Undo it
+    (drop the ignore) once chrono is replaced by jiff or time, here or upstream; check when merging upstream.
 
 ## Running it
 

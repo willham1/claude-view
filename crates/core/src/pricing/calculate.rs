@@ -149,8 +149,10 @@ pub fn calculate_cost_usd(tokens: &TokenBreakdown, pricing: &ModelPricing) -> f6
 /// Cost of cache writes, split by cache lifetime when the split is known.
 ///
 /// 5-minute writes use the base cache-write rate (tiered above 200k), 1-hour
-/// writes the 1-hour rate. With no split recorded (both zero), the total is
-/// charged at the 5-minute rate, as before the split existed.
+/// writes the 1-hour rate. Writes with no recorded lifetime (the part of the
+/// total in neither split count, e.g. turns whose usage had no
+/// `cache_creation` object summed with turns that had one) are charged at the
+/// 5-minute rate, as before the split existed.
 pub fn cache_creation_cost(
     total_tokens: i64,
     tokens_5m: i64,
@@ -158,8 +160,9 @@ pub fn cache_creation_cost(
     pricing: &ModelPricing,
 ) -> f64 {
     if tokens_5m > 0 || tokens_1hr > 0 {
+        let unsplit = (total_tokens - tokens_5m.max(0) - tokens_1hr.max(0)).max(0);
         let cost_5m = tiered_cost(
-            tokens_5m,
+            tokens_5m.max(0) + unsplit,
             pricing.cache_creation_cost_per_token,
             pricing.cache_creation_cost_per_token_above_200k,
         );
@@ -363,6 +366,38 @@ mod tests {
         // 100k at 5m rate $6.25/MTok + 100k at 1hr rate $10/MTok = $1.625
         // (the old lumped path charged all 200k at $6.25 = $1.25).
         assert!((calculate_cost_usd(&tokens, opus) - 1.625).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_cost_usd_mixed_unsplit_and_1hr_writes() {
+        let pricing = pricing();
+        let opus = lookup_pricing("claude-opus-4-6", &pricing).unwrap();
+        // 1M writes with no recorded lifetime + 1M 1-hour writes.
+        let tokens = TokenBreakdown {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 2_000_000,
+            cache_creation_5m_tokens: 0,
+            cache_creation_1hr_tokens: 1_000_000,
+        };
+        // 1M at 5m rate $6.25 + 1M at 1hr rate $10 = $16.25
+        assert!((calculate_cost_usd(&tokens, opus) - 16.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_calculate_cost_mixed_unsplit_5m_and_1hr_writes() {
+        let pricing = pricing();
+        // 300k unsplit + 100k 5m + 100k 1hr on Opus 4.6 (flat rates).
+        let tokens = TokenUsage {
+            cache_creation_tokens: 500_000,
+            cache_creation_5m_tokens: 100_000,
+            cache_creation_1hr_tokens: 100_000,
+            ..Default::default()
+        };
+        let cost = calculate_cost(&tokens, Some("claude-opus-4-6"), &pricing);
+        // 400k at $6.25/MTok = $2.50, 100k at $10/MTok = $1.00
+        assert!((cost.cache_creation_cost_usd - 3.50).abs() < 1e-9);
     }
 
     #[test]

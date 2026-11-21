@@ -188,6 +188,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_contributions_cost_prices_1hr_cache_writes_at_1hr_rate() {
+        let db = test_db().await;
+        let now = chrono::Utc::now().timestamp();
+        insert_contribution_session(&db, "cont-1h", now - 60, false, Some("main")).await;
+        // 1M cache-write tokens, all with a 1-hour lifetime, on Opus 4.6
+        // (5-minute writes $6.25/MTok, 1-hour writes $10/MTok).
+        db.pool()
+            .execute(
+                sqlx::query(
+                    r#"UPDATE session_stats
+                       SET primary_model = 'claude-opus-4-6',
+                           per_model_tokens_json = ?2
+                       WHERE session_id = ?1"#,
+                )
+                .bind("cont-1h")
+                .bind(
+                    r#"{"claude-opus-4-6":{"inputTokens":0,"outputTokens":0,"cacheReadTokens":0,"cacheCreationTokens":1000000,"cacheCreation5mTokens":0,"cacheCreation1hrTokens":1000000,"totalTokens":1000000}}"#,
+                ),
+            )
+            .await
+            .unwrap();
+
+        let app = build_app(db);
+        let (status, body, _) = do_get(app, "/api/contributions?range=all").await;
+
+        assert_eq!(status, StatusCode::OK);
+        let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let total = json["efficiency"]["totalCost"].as_f64().unwrap();
+        // $10.00 at the 1-hour rate; the old lumped path gave $6.25.
+        assert!((total - 10.0).abs() < 1e-9, "totalCost = {total}");
+        let opus = json["byModel"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["model"] == "claude-opus-4-6")
+            .expect("opus row");
+        // 12 lines (10 added + 2 removed) in the fixture.
+        let per_line = opus["costPerLine"].as_f64().unwrap();
+        assert!(
+            (per_line - 10.0 / 12.0).abs() < 1e-9,
+            "costPerLine = {per_line}"
+        );
+    }
+
+    #[tokio::test]
     async fn test_get_contributions_with_range() {
         let db = test_db().await;
         let app = build_app(db);

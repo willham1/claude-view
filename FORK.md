@@ -189,6 +189,27 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
     - **A helper that never reports back after "waiting on its own background work"** stays running until its
       session closes (about 2 in 1,600 such notices in the owner's history); its `meta.json` may say finished.
 
+16. **Contributions cost prices 1-hour cache writes at the 1-hour rate:** the Contributions page's total cost and
+    cost per line charged every cache write at the 5-minute rate, so sessions using 1-hour caching were undercounted
+    (on Opus 4.6, $10/MTok written as $6.25). It now splits writes by lifetime like the rest of the app, from the
+    5m/1h counts already stored per model in `session_stats.per_model_tokens_json` (`cache_creation_cost` in
+    `crates/core/src/pricing/calculate.rs`). Writes with no recorded lifetime keep the 5-minute rate, including
+    when they are summed with writes that have one (the part of the total in neither split count).
+    `calculate_cost` uses the same helper, so costs priced from per-model sums (Sessions list, session and project
+    pages, live per-model cost, sub-agent context cost) also charge such writes, which upstream dropped (it priced
+    only the split counts whenever there were any). Per-turn costs are unchanged. Keep this when merging upstream's
+    `calculate.rs`.
+
+17. **Rust git hooks find the toolchain without `cargo` on PATH:** Homebrew's rustup keeps its proxies in
+    `/opt/homebrew/opt/rustup/bin`, often not on PATH, so upstream's hooks failed (exit 127) and blocked every Rust
+    commit and push. In `lefthook.yml`, pre-commit runs rustfmt as `"$(rustup which rustfmt)"` (follows
+    `rust-toolchain.toml`), and pre-push runs `./scripts/cq deny check` instead of `cargo deny check` (cq puts the
+    pinned toolchain first on PATH). Keep both when merging upstream's `lefthook.yml`.
+
+18. **cargo-deny ignores RUSTSEC-2026-0543 (chrono unmaintained)**, the owner's decision on 2026-11-21: a maintenance
+    notice with no vulnerability and no fixed version, and claude-view uses chrono throughout (`deny.toml`). Undo it
+    (drop the ignore) once chrono is replaced by jiff or time, here or upstream; check when merging upstream.
+
 ## Running it
 
 - Launcher scripts are in `fork/launcher/` and find the repo from their own location. They run read-only:

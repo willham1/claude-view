@@ -31,6 +31,11 @@ pub struct TokenBreakdown {
     pub output_tokens: i64,
     pub cache_read_tokens: i64,
     pub cache_creation_tokens: i64,
+    /// Of `cache_creation_tokens`, those written with a 5-minute lifetime.
+    pub cache_creation_5m_tokens: i64,
+    /// Of `cache_creation_tokens`, those written with a 1-hour lifetime.
+    /// When both split fields are zero, all writes are priced at the 5-minute rate.
+    pub cache_creation_1hr_tokens: i64,
 }
 
 /// Accumulated token counts for a live session.

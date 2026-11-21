@@ -18,7 +18,9 @@ pre-commit:
       run: bunx turbo typecheck
     cargo-fmt:
       glob: "*.rs"
-      run: rustfmt {staged_files} && git add {staged_files}
+      # Via rustup: Homebrew's rustup keeps its rustfmt proxy off PATH, so a bare
+      # `rustfmt` isn't found; `rustup which` follows rust-toolchain.toml.
+      run: '"$(rustup which rustfmt)" {staged_files} && git add {staged_files}'
     ts-safety-check:
       glob: "*.{ts,tsx}"
       exclude: "*.test.{ts,tsx}"
@@ -74,7 +76,10 @@ pre-push:
             fi
           done
         fi
-        cargo deny check
+        # Via scripts/cq: `cargo` and `rustc` may not be on PATH (Homebrew's
+        # rustup keeps its proxies off it); cq puts the pinned toolchain first.
+        # Cargo finds the cargo-deny subcommand in ~/.cargo/bin itself.
+        ./scripts/cq deny check
     rust-test:
       # Unset GIT_* vars that `git push` exports to its hooks. Many tests
       # in this workspace shell out to git (crates/db/src/git_correlation/*,

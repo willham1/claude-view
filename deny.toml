@@ -20,6 +20,10 @@ ignore = [
     # `bundled` and links Homebrew's SQLite (>= 3.54.0, which has the fix); crates/db/tests/sqlite_version.rs
     # fails if the linked SQLite is older. Remove once sqlx accepts libsqlite3-sys >= 0.39.
     { id = "RUSTSEC-2026-0459", reason = "fork links Homebrew SQLite >= 3.54.0, not the bundled copy; enforced by crates/db/tests/sqlite_version.rs" },
+    # FORK (owner's decision, 2026-11-21): chrono is flagged unmaintained, a maintenance notice with no
+    # vulnerability and no fixed version. claude-view uses chrono throughout; replacing it (jiff or time) is a
+    # separate job. Remove this line when that lands.
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained, no security issue; used throughout, replacement is a later job (owner, 2026-11-21)" },
 ]
 
 # License allow list — covers all current dependencies

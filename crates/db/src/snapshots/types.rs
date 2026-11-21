@@ -237,6 +237,14 @@ pub struct ModelStats {
     pub cache_read_tokens: i64,
     #[ts(type = "number")]
     pub cache_creation_tokens: i64,
+    /// Of `cache_creation_tokens`, 5-minute cache writes. Used for pricing only.
+    #[serde(skip)]
+    #[ts(skip)]
+    pub cache_creation_5m_tokens: i64,
+    /// Of `cache_creation_tokens`, 1-hour cache writes. Used for pricing only.
+    #[serde(skip)]
+    #[ts(skip)]
+    pub cache_creation_1hr_tokens: i64,
     pub reedit_rate: Option<f64>,
     pub cost_per_line: Option<f64>,
     pub insight: String,

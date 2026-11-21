@@ -195,6 +195,10 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
     5m/1h counts already stored per model in `session_stats.per_model_tokens_json` (`cache_creation_cost` in
     `crates/core/src/pricing/calculate.rs`). Writes with no recorded lifetime keep the 5-minute rate, including
     when they are summed with writes that have one (the part of the total in neither split count).
+    `calculate_cost` uses the same helper, so costs priced from per-model sums (Sessions list, session and project
+    pages, live per-model cost, sub-agent context cost) also charge such writes, which upstream dropped (it priced
+    only the split counts whenever there were any). Per-turn costs are unchanged. Keep this when merging upstream's
+    `calculate.rs`.
 
 17. **Rust git hooks find the toolchain without `cargo` on PATH:** Homebrew's rustup keeps its proxies in
     `/opt/homebrew/opt/rustup/bin`, often not on PATH, so upstream's hooks failed (exit 127) and blocked every Rust

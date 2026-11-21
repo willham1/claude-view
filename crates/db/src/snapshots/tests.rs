@@ -443,7 +443,9 @@ mod tests {
             input_tokens: 100_000,
             output_tokens: 50_000,
             cache_read_tokens: 0,
-            cache_creation_tokens: 0,
+            cache_creation_tokens: 300,
+            cache_creation_5m_tokens: 100,
+            cache_creation_1hr_tokens: 200,
             reedit_rate: Some(0.15),
             cost_per_line: Some(0.003),
             insight: "Low re-edit rate".to_string(),
@@ -453,6 +455,9 @@ mod tests {
         assert!(json.contains("\"model\":\"claude-sonnet\""));
         assert!(json.contains("\"reeditRate\":0.15"));
         assert!(json.contains("\"costPerLine\":0.003"));
+        // The TTL split is for pricing only; the API shape is unchanged.
+        assert!(!json.contains("cacheCreation5m"));
+        assert!(!json.contains("cacheCreation1hr"));
     }
 
     #[tokio::test]

@@ -290,6 +290,8 @@ fn compute_model_costs(
             output_tokens: ms.output_tokens,
             cache_read_tokens: ms.cache_read_tokens,
             cache_creation_tokens: ms.cache_creation_tokens,
+            cache_creation_5m_tokens: ms.cache_creation_5m_tokens,
+            cache_creation_1hr_tokens: ms.cache_creation_1hr_tokens,
         };
         let model_token_total =
             ms.input_tokens + ms.output_tokens + ms.cache_read_tokens + ms.cache_creation_tokens;

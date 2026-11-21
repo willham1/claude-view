@@ -189,6 +189,12 @@ Started 2026-11-10 as a quick install; made a proper fork on 2026-11-11.
     - **A helper that never reports back after "waiting on its own background work"** stays running until its
       session closes (about 2 in 1,600 such notices in the owner's history); its `meta.json` may say finished.
 
+16. **Contributions cost prices 1-hour cache writes at the 1-hour rate:** the Contributions page's total cost and
+    cost per line charged every cache write at the 5-minute rate, so sessions using 1-hour caching were undercounted
+    (on Opus 4.6, $10/MTok written as $6.25). It now splits writes by lifetime like the rest of the app, from the
+    5m/1h counts already stored per model in `session_stats.per_model_tokens_json` (`cache_creation_cost` in
+    `crates/core/src/pricing/calculate.rs`). Writes with no recorded lifetime keep the 5-minute rate.
+
 ## Running it
 
 - Launcher scripts are in `fork/launcher/` and find the repo from their own location. They run read-only:

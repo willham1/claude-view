@@ -32,33 +32,12 @@ pub fn calculate_cost(
                 mp.cache_read_cost_per_token_above_200k,
             );
 
-            // Cache creation: split by TTL if available, otherwise use total with tiering
-            let cache_creation_cost_usd = {
-                let has_split =
-                    tokens.cache_creation_5m_tokens > 0 || tokens.cache_creation_1hr_tokens > 0;
-                if has_split {
-                    let cost_5m = tiered_cost(
-                        tokens.cache_creation_5m_tokens as i64,
-                        mp.cache_creation_cost_per_token,
-                        mp.cache_creation_cost_per_token_above_200k,
-                    );
-                    let cost_1hr = match mp.cache_creation_cost_per_token_1hr {
-                        Some(rate_1hr) => tokens.cache_creation_1hr_tokens as f64 * rate_1hr,
-                        None => tiered_cost(
-                            tokens.cache_creation_1hr_tokens as i64,
-                            mp.cache_creation_cost_per_token,
-                            mp.cache_creation_cost_per_token_above_200k,
-                        ),
-                    };
-                    cost_5m + cost_1hr
-                } else {
-                    tiered_cost(
-                        tokens.cache_creation_tokens as i64,
-                        mp.cache_creation_cost_per_token,
-                        mp.cache_creation_cost_per_token_above_200k,
-                    )
-                }
-            };
+            let cache_creation_cost_usd = cache_creation_cost(
+                tokens.cache_creation_tokens as i64,
+                tokens.cache_creation_5m_tokens as i64,
+                tokens.cache_creation_1hr_tokens as i64,
+                mp,
+            );
 
             let cache_savings_usd = tiered_cost(
                 tokens.cache_read_tokens as i64,
@@ -152,10 +131,11 @@ pub fn calculate_cost_usd(tokens: &TokenBreakdown, pricing: &ModelPricing) -> f6
         pricing.output_cost_per_token,
         pricing.output_cost_per_token_above_200k,
     );
-    let cache_create_cost = tiered_cost(
+    let cache_create_cost = cache_creation_cost(
         tokens.cache_creation_tokens,
-        pricing.cache_creation_cost_per_token,
-        pricing.cache_creation_cost_per_token_above_200k,
+        tokens.cache_creation_5m_tokens,
+        tokens.cache_creation_1hr_tokens,
+        pricing,
     );
     let cache_read_cost = tiered_cost(
         tokens.cache_read_tokens,
@@ -164,6 +144,41 @@ pub fn calculate_cost_usd(tokens: &TokenBreakdown, pricing: &ModelPricing) -> f6
     );
 
     input_cost + output_cost + cache_create_cost + cache_read_cost
+}
+
+/// Cost of cache writes, split by cache lifetime when the split is known.
+///
+/// 5-minute writes use the base cache-write rate (tiered above 200k), 1-hour
+/// writes the 1-hour rate. With no split recorded (both zero), the total is
+/// charged at the 5-minute rate, as before the split existed.
+pub fn cache_creation_cost(
+    total_tokens: i64,
+    tokens_5m: i64,
+    tokens_1hr: i64,
+    pricing: &ModelPricing,
+) -> f64 {
+    if tokens_5m > 0 || tokens_1hr > 0 {
+        let cost_5m = tiered_cost(
+            tokens_5m,
+            pricing.cache_creation_cost_per_token,
+            pricing.cache_creation_cost_per_token_above_200k,
+        );
+        let cost_1hr = match pricing.cache_creation_cost_per_token_1hr {
+            Some(rate_1hr) => tokens_1hr.max(0) as f64 * rate_1hr,
+            None => tiered_cost(
+                tokens_1hr,
+                pricing.cache_creation_cost_per_token,
+                pricing.cache_creation_cost_per_token_above_200k,
+            ),
+        };
+        cost_5m + cost_1hr
+    } else {
+        tiered_cost(
+            total_tokens,
+            pricing.cache_creation_cost_per_token,
+            pricing.cache_creation_cost_per_token_above_200k,
+        )
+    }
 }
 
 pub fn tiered_cost(tokens: i64, base_rate: f64, above_200k_rate: Option<f64>) -> f64 {
@@ -331,6 +346,64 @@ mod tests {
         let cost = calculate_cost(&tokens, Some("claude-opus-4-6"), &pricing);
         // Opus 4.6 flat: 100k at $6.25/MTok = $0.625
         assert!((cost.cache_creation_cost_usd - 0.625).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_cost_usd_prices_1hr_cache_writes_at_1hr_rate() {
+        let pricing = pricing();
+        let opus = lookup_pricing("claude-opus-4-6", &pricing).unwrap();
+        let tokens = TokenBreakdown {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 200_000,
+            cache_creation_5m_tokens: 100_000,
+            cache_creation_1hr_tokens: 100_000,
+        };
+        // 100k at 5m rate $6.25/MTok + 100k at 1hr rate $10/MTok = $1.625
+        // (the old lumped path charged all 200k at $6.25 = $1.25).
+        assert!((calculate_cost_usd(&tokens, opus) - 1.625).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_cost_usd_without_split_uses_5m_rate() {
+        let pricing = pricing();
+        let opus = lookup_pricing("claude-opus-4-6", &pricing).unwrap();
+        let tokens = TokenBreakdown {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 100_000,
+            cache_creation_5m_tokens: 0,
+            cache_creation_1hr_tokens: 0,
+        };
+        assert!((calculate_cost_usd(&tokens, opus) - 0.625).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_cost_usd_matches_calculate_cost() {
+        let pricing = pricing();
+        let usage = TokenUsage {
+            input_tokens: 12_345,
+            output_tokens: 6_789,
+            cache_read_tokens: 300_000,
+            cache_creation_tokens: 50_000,
+            cache_creation_5m_tokens: 20_000,
+            cache_creation_1hr_tokens: 30_000,
+            ..Default::default()
+        };
+        let model = "claude-sonnet-4-5-20250929";
+        let breakdown = TokenBreakdown {
+            input_tokens: usage.input_tokens as i64,
+            output_tokens: usage.output_tokens as i64,
+            cache_read_tokens: usage.cache_read_tokens as i64,
+            cache_creation_tokens: usage.cache_creation_tokens as i64,
+            cache_creation_5m_tokens: usage.cache_creation_5m_tokens as i64,
+            cache_creation_1hr_tokens: usage.cache_creation_1hr_tokens as i64,
+        };
+        let full = calculate_cost(&usage, Some(model), &pricing).total_usd;
+        let mp = lookup_pricing(model, &pricing).unwrap();
+        assert!((calculate_cost_usd(&breakdown, mp) - full).abs() < 1e-12);
     }
 
     #[test]

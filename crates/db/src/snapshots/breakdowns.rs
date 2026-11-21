@@ -62,6 +62,8 @@ impl Database {
             output_tokens: i64,
             cache_read_tokens: i64,
             cache_creation_tokens: i64,
+            cache_creation_5m_tokens: i64,
+            cache_creation_1hr_tokens: i64,
             sessions_primary: i64,
             lines: i64,
             reedited: i64,
@@ -79,6 +81,8 @@ impl Database {
                 agg.output_tokens += usage.output_tokens as i64;
                 agg.cache_read_tokens += usage.cache_read_tokens as i64;
                 agg.cache_creation_tokens += usage.cache_creation_tokens as i64;
+                agg.cache_creation_5m_tokens += usage.cache_creation_5m_tokens as i64;
+                agg.cache_creation_1hr_tokens += usage.cache_creation_1hr_tokens as i64;
             }
             if let Some(model) = primary_model {
                 let agg = by_model.entry(model).or_default();
@@ -122,6 +126,8 @@ impl Database {
                     output_tokens: agg.output_tokens,
                     cache_read_tokens: agg.cache_read_tokens,
                     cache_creation_tokens: agg.cache_creation_tokens,
+                    cache_creation_5m_tokens: agg.cache_creation_5m_tokens,
+                    cache_creation_1hr_tokens: agg.cache_creation_1hr_tokens,
                     reedit_rate,
                     cost_per_line: None,
                     insight,

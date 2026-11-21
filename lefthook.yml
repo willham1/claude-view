@@ -76,7 +76,10 @@ pre-push:
             fi
           done
         fi
-        cargo deny check
+        # Via scripts/cq: `cargo` and `rustc` may not be on PATH (Homebrew's
+        # rustup keeps its proxies off it); cq puts the pinned toolchain first.
+        # Cargo finds the cargo-deny subcommand in ~/.cargo/bin itself.
+        ./scripts/cq deny check
     rust-test:
       # Unset GIT_* vars that `git push` exports to its hooks. Many tests
       # in this workspace shell out to git (crates/db/src/git_correlation/*,
